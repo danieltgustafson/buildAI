@@ -14,4 +14,5 @@ COPY . .
 ENV PORT=8000
 EXPOSE ${PORT}
 
+# Use shell form so $PORT env var (set by Railway/other PaaS) gets expanded.
 CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}

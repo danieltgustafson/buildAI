@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -e ".[dev]"
 COPY . .
 
 ENV PORT=8000
-EXPOSE ${PORT}
+EXPOSE 8000
 
-# Use shell form so $PORT env var (set by Railway/other PaaS) gets expanded.
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
+# Explicit /bin/sh -c ensures shell expansion of $PORT on all runtimes
+CMD ["/bin/sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

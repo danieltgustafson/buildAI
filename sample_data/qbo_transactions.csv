@@ -1,0 +1,10 @@
+date,vendor,amount,category,customer,memo
+2024-01-10,ABC Supply Co,5250.00,Materials,PROJ-100,Roofing materials delivery
+2024-01-12,XYZ Subs Inc,12000.00,Subcontractor,PROJ-100,Framing subcontract payment
+2024-01-14,City Permits Office,450.00,Permits,PROJ-100,Building permit
+2024-01-15,DEF Equipment Rental,1800.00,Equipment,PROJ-200,Excavator rental 1 week
+2024-01-16,ABC Supply Co,3100.00,Materials,PROJ-200,Concrete and rebar
+2024-01-17,GHI Subs LLC,8500.00,Subcontractor,PROJ-300,Electrical rough-in
+2024-01-18,ABC Supply Co,2200.00,Materials,PROJ-300,Electrical supplies
+2024-01-19,City Permits Office,350.00,Permits,PROJ-300,Electrical permit
+2024-01-20,Unknown Vendor,1500.00,Other,UNMAPPED-QBO,Miscellaneous expense

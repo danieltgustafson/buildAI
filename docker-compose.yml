@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: contractor_ops
+      POSTGRES_PASSWORD: contractor_ops_dev
+      POSTGRES_DB: contractor_ops
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/views.sql:/docker-entrypoint-initdb.d/views.sql
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://contractor_ops:contractor_ops_dev@postgres:5432/contractor_ops
+      SECRET_KEY: dev-secret-key-change-in-production
+      ENVIRONMENT: development
+    depends_on:
+      - postgres
+    volumes:
+      - ./app:/app/app
+      - ./uploads:/app/uploads
+
+  metabase:
+    image: metabase/metabase:latest
+    ports:
+      - "3000:3000"
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: contractor_ops
+      MB_DB_PORT: 5432
+      MB_DB_USER: contractor_ops
+      MB_DB_PASS: contractor_ops_dev
+      MB_DB_HOST: postgres
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata:

@@ -14,5 +14,5 @@ COPY . .
 ENV PORT=8000
 EXPOSE 8000
 
-# Explicit /bin/sh -c ensures shell expansion of $PORT on all runtimes
-CMD ["/bin/sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Use python -m to read PORT from env at runtime (works even without shell expansion)
+CMD ["python", "-m", "app.main"]

@@ -76,6 +76,7 @@ pytest -v
 | `POST` | `/mappings` | Create source key to job mapping |
 | `GET` | `/mappings` | List all mappings |
 | `GET` | `/mappings/unresolved` | Unmapped source keys needing resolution |
+| `POST` | `/seed/demo` | Seed database with demo data (admin only) |
 
 Full interactive docs available at `/docs` when the API is running.
 
@@ -108,9 +109,40 @@ Core tables: `jobs`, `employees`, `cost_codes`, `time_entries`, `gl_transactions
 
 Metabase views: `v_job_cost_summary`, `v_wip_report`, `v_exceptions`
 
-## Sample Data
+## Demo Data & Client Presentation
 
-The `sample_data/` directory includes example CSVs for testing:
+To seed the database with realistic demo data (8 jobs, 15 employees, hundreds of time entries and transactions):
+
+```bash
+# Via CLI (after docker compose up)
+docker compose exec api python -m scripts.seed_demo_data --reset
+
+# Or via the API (requires admin token)
+POST /seed/demo?reset=true
+Authorization: Bearer <admin-token>
+```
+
+This creates:
+- **8 contractor jobs** at various stages: active renovation, office build-out, electrical upgrade, roofing (overrun!), facade restoration, townhome development, HVAC retrofit (on hold), kitchen remodel (closed)
+- **15 employees** across trades (foremen, electricians, plumbers, carpenters, laborers, etc.)
+- **~400+ time entries** with burdened labor costs spread across 8 weeks
+- **~80+ GL transactions** (materials, subcontractors, equipment rentals, permits)
+- **Budgets** for every job with planned labor/material/sub costs
+- **Billing records** showing progress invoicing
+- **Job mappings** for ADP and QBO source keys
+- **Exceptions**: unmapped entries, job overrun flags, margin drift warnings
+- **Daily metric snapshots** for trend charts in Metabase
+
+### Remote Hosting for Client Demo
+
+See [docs/DEPLOY.md](docs/DEPLOY.md) for detailed instructions on deploying to:
+- **EC2** (cheapest, most control) -- ~$15/mo, 30 min setup
+- **Railway** (zero-ops) -- ~$10/mo, 15 min setup
+- **Render** or **Fly.io** as alternatives
+
+## Sample CSV Files
+
+The `sample_data/` directory includes example CSVs for testing ingestion:
 - `adp_time_export.csv` - ADP time/payroll entries
 - `qbo_transactions.csv` - QuickBooks Online transactions
 - `budgets.csv` - Job budgets/estimates
@@ -140,6 +172,8 @@ The `sample_data/` directory includes example CSVs for testing:
 ├── alembic/           # Database migrations
 ├── sql/               # Metabase views
 ├── sample_data/       # Example CSV files
+├── scripts/           # CLI utilities (seed_demo_data.py)
+├── docs/              # Deployment guides
 ├── tests/             # Pytest test suite
 ├── docker-compose.yml # Local dev stack
 ├── Dockerfile

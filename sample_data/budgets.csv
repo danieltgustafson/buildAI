@@ -1,0 +1,4 @@
+job_name,job_ref,planned_revenue,planned_labor_hours,planned_labor_cost,planned_material_cost,planned_sub_cost
+Main St Renovation,PROJ-100,150000.00,500,45000.00,25000.00,30000.00
+Oak Ave Foundation,PROJ-200,85000.00,300,27000.00,15000.00,10000.00
+Elm St Electrical,PROJ-300,60000.00,200,18000.00,8000.00,20000.00

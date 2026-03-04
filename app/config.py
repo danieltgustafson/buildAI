@@ -12,5 +12,12 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        """Normalize provider URLs so SQLAlchemy can always consume them."""
+        if self.database_url.startswith("postgres://"):
+            return self.database_url.replace("postgres://", "postgresql://", 1)
+        return self.database_url
+
 
 settings = Settings()

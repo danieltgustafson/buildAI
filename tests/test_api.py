@@ -96,3 +96,9 @@ def test_create_mapping(client):
     )
     assert resp.status_code == 201
     assert resp.json()["source_key"] == "PROJ-100"
+
+
+def test_upload_ui_page(client):
+    resp = client.get("/ui")
+    assert resp.status_code == 200
+    assert "Upload UI" in resp.text

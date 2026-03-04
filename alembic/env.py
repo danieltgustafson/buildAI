@@ -1,14 +1,18 @@
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from alembic import context
+from app.config import settings
 from app.database import Base
 from app.models import *  # noqa: F401,F403 -- ensure all models registered
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Prefer runtime DATABASE_URL (Railway/Render/etc.) over alembic.ini default.
+config.set_main_option("sqlalchemy.url", settings.sqlalchemy_database_url)
 
 target_metadata = Base.metadata
 

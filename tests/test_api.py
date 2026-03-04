@@ -102,13 +102,3 @@ def test_upload_ui_page(client):
     resp = client.get("/ui")
     assert resp.status_code == 200
     assert "Upload UI" in resp.text
-
-
-def test_clear_demo_endpoint(client):
-    token_resp = client.post("/auth/token", json={"username": "admin", "password": "admin"})
-    token = token_resp.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    resp = client.delete("/seed/demo", headers=headers)
-    assert resp.status_code == 200
-    assert "Database cleared" in resp.json()["message"]

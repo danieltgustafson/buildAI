@@ -43,7 +43,7 @@ def upload_ui() -> str:
   <fieldset>
     <legend>2) Demo data helpers (admin only)</legend>
     <button onclick=\"seed(true)\">Seed demo data (reset=true)</button>
-    <button onclick=\"clearDemo()\">Clear all data (empty schema)</button>
+    <button onclick=\"clearDemo()\">Clear all data (keep schema)</button>
   </fieldset>
 
   <fieldset>
@@ -72,6 +72,15 @@ function log(data) {
   out.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
 }
 
+
+async function parseResponse(resp) {
+  const contentType = resp.headers.get('content-type') || '';
+  const payload = contentType.includes('application/json')
+    ? await resp.json()
+    : await resp.text();
+  return { ok: resp.ok, status: resp.status, payload };
+}
+
 function authHeaders() {
   const token = document.getElementById('token').value.trim();
   return token ? { 'Authorization': `Bearer ${token}` } : {};
@@ -87,11 +96,11 @@ async function login() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const data = await resp.json();
-  if (resp.ok) {
-    document.getElementById('token').value = data.access_token;
+  const { ok, payload } = await parseResponse(resp);
+  if (ok && payload.access_token) {
+    document.getElementById('token').value = payload.access_token;
   }
-  log(data);
+  log(payload);
 }
 
 async function seed(reset) {
@@ -99,17 +108,19 @@ async function seed(reset) {
     method: 'POST',
     headers: authHeaders(),
   });
-  log(await resp.json());
+  const { payload } = await parseResponse(resp);
+  log(payload);
 }
 
 async function clearDemo() {
-  const confirmed = window.confirm('This drops and recreates all tables. Continue?');
+  const confirmed = window.confirm('This will remove all table rows. Continue?');
   if (!confirmed) return;
   const resp = await fetch('/seed/demo', {
     method: 'DELETE',
     headers: authHeaders(),
   });
-  log(await resp.json());
+  const { payload } = await parseResponse(resp);
+  log(payload);
 }
 
 async function upload(kind) {
@@ -124,7 +135,8 @@ async function upload(kind) {
     headers: authHeaders(),
     body: fd,
   });
-  log(await resp.json());
+  const { payload } = await parseResponse(resp);
+  log(payload);
 }
 </script>
 </body>

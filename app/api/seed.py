@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.auth import TokenData, require_role
@@ -24,8 +25,12 @@ def seed_demo_data(
     """
     from scripts.seed_demo_data import seed
 
-    counts = seed(db, reset=reset)
-    return {"status": "ok", "message": "Demo data seeded successfully", "counts": counts}
+    try:
+        counts = seed(db, reset=reset)
+        return {"status": "ok", "message": "Demo data seeded successfully", "counts": counts}
+    except Exception as exc:  # noqa: BLE001 - API should return safe error response
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Seed failed: {exc}") from exc
 
 
 @router.delete("/demo")
@@ -33,11 +38,14 @@ def clear_demo_data(
     db: Session = Depends(get_db),
     _user: TokenData = Depends(require_role("admin")),
 ):
-    """Drop and recreate all tables without inserting demo rows."""
+    """Remove all rows from app tables without dropping schema."""
     from app.database import Base
 
-    bind = db.get_bind()
-    db.close()
-    Base.metadata.drop_all(bind=bind)
-    Base.metadata.create_all(bind=bind)
-    return {"status": "ok", "message": "Database cleared (empty schema recreated)"}
+    try:
+        for table in reversed(Base.metadata.sorted_tables):
+            db.execute(delete(table))
+        db.commit()
+        return {"status": "ok", "message": "Database cleared (all table rows removed)"}
+    except Exception as exc:  # noqa: BLE001 - API should return safe error response
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Clear failed: {exc}") from exc

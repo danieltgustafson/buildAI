@@ -140,6 +140,14 @@ See [docs/DEPLOY.md](docs/DEPLOY.md) for detailed instructions on deploying to:
 - **Railway** (zero-ops) -- ~$10/mo, 15 min setup
 - **Render** or **Fly.io** as alternatives
 
+
+### Railway quick notes
+
+- Set `DATABASE_URL` to Railway Postgres' provided variable (`${{Postgres.DATABASE_URL}}` preferred).
+- The app startup runs `alembic upgrade head` so schema tables exist before requests are served.
+- If you see "relation does not exist", verify both the API service and any seed command are using the exact same `DATABASE_URL`.
+- Seed demo data after deploy with `POST /seed/demo?reset=true` (admin token) or `python -m scripts.seed_demo_data --reset`.
+
 ## Sample CSV Files
 
 The `sample_data/` directory includes example CSVs for testing ingestion:

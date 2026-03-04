@@ -28,7 +28,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.database import Base, SessionLocal, engine
+from app.database import Base, SessionLocal
 from app.models.cost_code import CostCode
 from app.models.employee import Employee
 from app.models.exception import Exception as ExceptionModel
@@ -278,11 +278,12 @@ def _workdays_in_range(start: date, end: date) -> list[date]:
 
 def seed(db: Session, reset: bool = False) -> dict:
     """Populate database with demo data. Returns summary counts."""
+    bind = db.get_bind()
     if reset:
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
+        Base.metadata.drop_all(bind=bind)
+        Base.metadata.create_all(bind=bind)
     else:
-        Base.metadata.create_all(bind=engine)
+        Base.metadata.create_all(bind=bind)
 
     counts = {}
 

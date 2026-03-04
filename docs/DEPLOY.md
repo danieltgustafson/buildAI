@@ -106,10 +106,18 @@ If you want to avoid managing an EC2 instance:
 2. Go to [railway.app](https://railway.app), create a new project
 3. Add services: **PostgreSQL** (managed) + **Docker** (from repo)
 4. Set environment variables:
-   - `DATABASE_URL` = Railway's Postgres connection string
+   - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (preferred) or `${{Postgres.DATABASE_PUBLIC_URL}}`
    - `SECRET_KEY` = some random string
-5. Railway auto-deploys on push
-6. For Metabase, add a separate service using the `metabase/metabase` Docker image
+5. Railway auto-deploys on push. This repo runs `alembic upgrade head` before starting the API so tables are created automatically.
+6. Seed demo data once deployment is healthy:
+   - `POST /seed/demo?reset=true` (admin token), or
+   - open Railway service shell and run `python -m scripts.seed_demo_data --reset`
+7. For Metabase, add a separate service using the `metabase/metabase` Docker image
+
+**Railway Postgres notes**
+- A URL like `.../railway` is normal; `railway` is the default database name Railway provisions.
+- "relation does not exist" errors usually mean migrations were not run against the same `DATABASE_URL` the API is using.
+- If you copy a URL manually and it begins with `postgres://`, this app now normalizes it automatically for SQLAlchemy.
 
 ### Render
 

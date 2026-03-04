@@ -108,11 +108,13 @@ If you want to avoid managing an EC2 instance:
 4. Set environment variables:
    - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (preferred) or `${{Postgres.DATABASE_PUBLIC_URL}}`
    - `SECRET_KEY` = some random string
-5. Railway auto-deploys on push. This repo runs `alembic upgrade head` before starting the API so tables are created automatically.
+5. Railway auto-deploys on push. This repo runs `python -m scripts.start` (wait for DB, then migrate, then start API) so tables are created automatically.
+   - Demo data is **not** loaded automatically on startup.
 6. Seed demo data once deployment is healthy:
    - `POST /seed/demo?reset=true` (admin token), or
    - open Railway service shell and run `python -m scripts.seed_demo_data --reset`
-7. For Metabase, add a separate service using the `metabase/metabase` Docker image
+7. Use `GET /ui` for a simple browser upload flow (token login + CSV uploads + seed/clear).
+8. For Metabase, add a separate service using the `metabase/metabase` Docker image
 
 **Railway Postgres notes**
 - A URL like `.../railway` is normal; `railway` is the default database name Railway provisions.

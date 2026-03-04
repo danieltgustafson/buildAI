@@ -1,1 +1,1 @@
-web: alembic upgrade head && python -m app.main
+web: python -m scripts.start

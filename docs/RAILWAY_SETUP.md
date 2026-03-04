@@ -111,6 +111,7 @@ For dashboards:
 
 1. In your project, click **"+ New" > "Docker Image"**
 2. Enter image: `metabase/metabase:latest`
+   - Leave Start Command blank (use image default entrypoint).
 3. Add environment variables:
    - `MB_JETTY_PORT`: `${{PORT}}` (important: no quotes)
    - `MB_DB_TYPE`: `postgres`
@@ -172,6 +173,13 @@ Once deployed, share these URLs:
 **Can't connect to Postgres**: Make sure you're using `${{Postgres.DATABASE_URL}}` as the variable reference, not a hardcoded URL. Railway's internal networking requires the reference syntax.
 
 **Metabase crashes with `NumberFormatException: For input string: "${PORT}"`**: this means `MB_JETTY_PORT` was set to the literal string `${PORT}`. Set `MB_JETTY_PORT` to `${{PORT}}` (Railway reference syntax) and do not wrap it in quotes.
+
+**Metabase URL returns 502**:
+- Usually means the container is not healthy yet or not listening on Railway-assigned port.
+- Confirm `MB_JETTY_PORT` is `${{PORT}}` (exactly, no quotes).
+- Ensure you did **not** set `MB_JETTY_PORT=${PORT}` or any hardcoded port like `3000`.
+- Ensure Start Command was not overridden to something that ignores `PORT`.
+- Check logs for `Metabase Initialization COMPLETE` before retrying URL (first boot can take a few minutes).
 
 **Seed script fails**: Make sure tables are created first. The seed script calls `Base.metadata.create_all()` which should handle this, but if you're using Alembic migrations you may need to run those first.
 

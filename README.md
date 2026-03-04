@@ -160,6 +160,7 @@ See [docs/DEPLOY.md](docs/DEPLOY.md) for detailed instructions on deploying to:
 3. Use database name from Railway (often `railway`) and SSL mode `require` when using public connection details.
 4. Query these views for dashboards: `v_job_cost_summary`, `v_wip_report`, `v_exceptions`.
 5. For Railway Metabase, set `MB_JETTY_PORT` to `${{PORT}}` (not `${PORT}`) to avoid startup `NumberFormatException`.
+6. If Metabase URL shows 502, wait for first boot and verify logs include `Metabase Initialization COMPLETE` plus `MB_JETTY_PORT=${{PORT}}`.
 
 ## Sample CSV Files
 

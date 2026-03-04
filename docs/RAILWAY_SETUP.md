@@ -45,7 +45,7 @@ Railway auto-deploys when you push to GitHub or when you change variables. The b
 
 1. Railway reads `railway.toml` and uses the `Dockerfile`
 2. Builds the Docker image
-3. Starts the container with `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+3. Starts the container with `python -m scripts.start` (waits for DB, runs migrations, then boots API)
 4. Runs the health check at `/health`
 
 You should see the build logs in the Railway dashboard. First deploy takes 2-3 minutes.
@@ -59,9 +59,12 @@ You should see the build logs in the Railway dashboard. First deploy takes 2-3 m
 
 Test it: visit `https://your-url.up.railway.app/docs` -- you should see the Swagger UI.
 
-## Step 6: Run Database Migrations & Seed Demo Data
+## Step 6: Seed Demo Data (optional)
 
 Railway provides a shell you can use:
+
+> Migrations already run at startup via `python -m scripts.start`, so tables should exist before the API serves traffic.
+> Demo data is **not** auto-loaded; run the seed command only when you want sample data.
 
 **Option A: Via Railway CLI**
 
@@ -167,3 +170,25 @@ Once deployed, share these URLs:
 **Can't connect to Postgres**: Make sure you're using `${{Postgres.DATABASE_URL}}` as the variable reference, not a hardcoded URL. Railway's internal networking requires the reference syntax.
 
 **Seed script fails**: Make sure tables are created first. The seed script calls `Base.metadata.create_all()` which should handle this, but if you're using Alembic migrations you may need to run those first.
+
+**Alembic log lines during startup**: Messages like `Context impl PostgresqlImpl.` and `Will assume transactional DDL.` are informational and expected.
+
+### Clear demo data before switching to live data
+
+If you want an empty schema (no sample rows), run one of:
+
+```bash
+# API route (admin token required)
+DELETE /seed/demo
+
+# or from Railway shell
+python -c "from app.database import Base, engine; Base.metadata.drop_all(bind=engine); Base.metadata.create_all(bind=engine)"
+```
+
+### Browser upload UI
+
+Use `https://<your-api-domain>/ui` for a simple built-in page to:
+- login and store token
+- seed/clear demo data
+- upload ADP/QBO/Budget CSVs
+

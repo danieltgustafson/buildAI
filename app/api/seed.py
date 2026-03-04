@@ -26,3 +26,18 @@ def seed_demo_data(
 
     counts = seed(db, reset=reset)
     return {"status": "ok", "message": "Demo data seeded successfully", "counts": counts}
+
+
+@router.delete("/demo")
+def clear_demo_data(
+    db: Session = Depends(get_db),
+    _user: TokenData = Depends(require_role("admin")),
+):
+    """Drop and recreate all tables without inserting demo rows."""
+    from app.database import Base
+
+    bind = db.get_bind()
+    db.close()
+    Base.metadata.drop_all(bind=bind)
+    Base.metadata.create_all(bind=bind)
+    return {"status": "ok", "message": "Database cleared (empty schema recreated)"}

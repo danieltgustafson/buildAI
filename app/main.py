@@ -3,7 +3,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth_routes, exceptions, ingest, jobs, mappings, seed, ui, wip
 from app.api import (
     auth_routes,
     building_research,

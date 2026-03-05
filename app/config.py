@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     environment: str = "development"
     access_token_expire_minutes: int = 60 * 24  # 24 hours
     algorithm: str = "HS256"
+    research_user_agent: str = "contractor-ops-ai/0.1 (+public-record-research-agent; contact:ops@example.com)"
+    openai_api_key: str | None = None
+    openai_research_model: str = "gpt-4.1-mini"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

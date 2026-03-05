@@ -4,6 +4,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import auth_routes, exceptions, ingest, jobs, mappings, seed, ui, wip
+from app.api import (
+    auth_routes,
+    building_research,
+    exceptions,
+    ingest,
+    jobs,
+    mappings,
+    seed,
+    ui,
+    wip,
+)
 from app.config import settings
 
 app = FastAPI(
@@ -32,6 +43,7 @@ app.include_router(exceptions.router)
 app.include_router(mappings.router)
 app.include_router(seed.router)
 app.include_router(ui.router)
+app.include_router(building_research.router)
 
 
 @app.get("/health")

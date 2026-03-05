@@ -96,3 +96,18 @@ def test_create_mapping(client):
     )
     assert resp.status_code == 201
     assert resp.json()["source_key"] == "PROJ-100"
+
+
+def test_upload_ui_page(client):
+    resp = client.get("/ui")
+    assert resp.status_code == 200
+    assert "Upload UI" in resp.text
+
+
+def test_seed_profile_validation(client):
+    token_resp = client.post("/auth/token", json={"username": "admin", "password": "admin"})
+    token = token_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = client.post("/seed/demo?background=true&profile=invalid", headers=headers)
+    assert resp.status_code == 400

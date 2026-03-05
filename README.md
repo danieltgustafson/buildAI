@@ -77,6 +77,8 @@ pytest -v
 | `GET` | `/mappings` | List all mappings |
 | `GET` | `/mappings/unresolved` | Unmapped source keys needing resolution |
 | `POST` | `/seed/demo` | Seed database with demo data (admin only) |
+| `DELETE` | `/seed/demo` | Clear all data (remove all rows, keep schema, admin only) |
+| `GET` | `/ui` | Simple browser UI for login + CSV uploads + seeding |
 
 Full interactive docs available at `/docs` when the API is running.
 
@@ -139,6 +141,26 @@ See [docs/DEPLOY.md](docs/DEPLOY.md) for detailed instructions on deploying to:
 - **EC2** (cheapest, most control) -- ~$15/mo, 30 min setup
 - **Railway** (zero-ops) -- ~$10/mo, 15 min setup
 - **Render** or **Fly.io** as alternatives
+
+
+### Railway quick notes
+
+- Set `DATABASE_URL` to Railway Postgres' provided variable (`${{Postgres.DATABASE_URL}}` preferred).
+- The app startup runs `python -m scripts.start` (DB readiness check + migrations) so schema tables exist before requests are served.
+- Logs like `Context impl PostgresqlImpl` and `Will assume transactional DDL` are normal Alembic startup messages.
+- Demo data is **not** auto-populated on startup. You must seed explicitly via `POST /seed/demo?reset=true` or `python -m scripts.seed_demo_data --reset`.
+- To clear demo data before loading live data: call `DELETE /seed/demo` (admin token) to remove all rows (schema stays).
+- If you see "relation does not exist", verify both the API service and any seed command are using the exact same `DATABASE_URL`.
+- Use `GET /ui` for a simple upload interface (login, seed/clear, ADP/QBO/Budget uploads).
+
+## Metabase quick connect
+
+1. Deploy a Metabase service (e.g. `metabase/metabase:latest`) on Railway.
+2. In Metabase setup, add a PostgreSQL connection using the same Railway Postgres values used by the API.
+3. Use database name from Railway (often `railway`) and SSL mode `require` when using public connection details.
+4. Query these views for dashboards: `v_job_cost_summary`, `v_wip_report`, `v_exceptions`.
+5. For Railway Metabase, set `MB_JETTY_PORT` to `${{PORT}}` (not `${PORT}`) to avoid startup `NumberFormatException`.
+6. If Metabase URL shows 502, wait for first boot and verify logs include `Metabase Initialization COMPLETE` plus `MB_JETTY_PORT=${{PORT}}`.
 
 ## Sample CSV Files
 

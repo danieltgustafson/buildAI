@@ -1,8 +1,8 @@
 """Seed the database with realistic demo data for client presentations.
 
 Usage:
-    python -m scripts.seed_demo_data          # uses DATABASE_URL from .env
-    python -m scripts.seed_demo_data --reset   # drops and recreates all tables first
+    python -m scripts.seed_demo_data --lite           # smaller dataset (default)
+    python -m scripts.seed_demo_data --full --reset   # full dataset, drop/recreate first
 
 This creates a full demo dataset with:
 - 8 jobs at various stages (active, near-complete, overrun, on-hold, closed)
@@ -22,13 +22,12 @@ from __future__ import annotations
 
 import random
 import sys
-import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.database import Base, SessionLocal, engine
+from app.database import Base, SessionLocal
 from app.models.cost_code import CostCode
 from app.models.employee import Employee
 from app.models.exception import Exception as ExceptionModel
@@ -276,15 +275,36 @@ def _workdays_in_range(start: date, end: date) -> list[date]:
     return days
 
 
-def seed(db: Session, reset: bool = False) -> dict:
+def _scaled_count(base: int, scale: float, minimum: int = 1) -> int:
+    """Return scaled integer count with floor protection."""
+    return max(minimum, int(round(base * scale)))
+
+
+def _scaled_probability(base: float, scale: float) -> float:
+    """Lower probabilities for lightweight seed profiles."""
+    return min(1.0, max(0.05, base * scale))
+
+
+def _checkpoint(db: Session) -> None:
+    """Persist batched inserts and clear identity map to cap memory growth."""
+    db.commit()
+    db.expunge_all()
+
+
+def seed(db: Session, reset: bool = False, profile: str = "lite") -> dict:
     """Populate database with demo data. Returns summary counts."""
+    bind = db.get_bind()
     if reset:
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
+        Base.metadata.drop_all(bind=bind)
+        Base.metadata.create_all(bind=bind)
     else:
-        Base.metadata.create_all(bind=engine)
+        Base.metadata.create_all(bind=bind)
 
     counts = {}
+
+    profile_name = profile.strip().lower()
+    profile_scale = 0.30 if profile_name == "lite" else 1.0
+    counts["profile"] = profile_name
 
     # --- Burden rates (historical + current) ---
     burden_old = LaborBurdenRate(
@@ -472,7 +492,7 @@ def seed(db: Session, reset: bool = False) -> dict:
         for wd in workdays:
             for emp_ref in crew:
                 # Some randomness: not everyone works every day
-                if random.random() < 0.75:
+                if random.random() < _scaled_probability(0.75, profile_scale):
                     emp_id, pay_rate = emp_map[emp_ref]
                     hrs = round(
                         random.gauss(hours_per_day_per_person, hours_per_day_per_person * 0.25),
@@ -498,9 +518,11 @@ def seed(db: Session, reset: bool = False) -> dict:
                         )
                     )
                     time_entry_count += 1
+                    if time_entry_count % 250 == 0:
+                        _checkpoint(db)
 
     # Add some unmapped time entries (no job_id)
-    for i in range(15):
+    for i in range(_scaled_count(15, profile_scale)):
         emp_ref = random.choice(list(emp_map.keys()))
         emp_id, pay_rate = emp_map[emp_ref]
         wd = _random_date_between(date(2024, 10, 1), now)
@@ -534,7 +556,7 @@ def seed(db: Session, reset: bool = False) -> dict:
         # Materials
         material_budget = jdata["budget_material"]
         material_spend = material_budget * progress * random.uniform(0.85, 1.15)
-        n_material_txns = random.randint(3, 10)
+        n_material_txns = max(1, _scaled_count(random.randint(3, 10), profile_scale))
         for _ in range(n_material_txns):
             amount = round(material_spend / n_material_txns * random.uniform(0.5, 1.5), 2)
             vendor = random.choice(VENDORS[TransactionCategory.materials])
@@ -552,11 +574,13 @@ def seed(db: Session, reset: bool = False) -> dict:
                 )
             )
             txn_count += 1
+            if txn_count % 100 == 0:
+                _checkpoint(db)
 
         # Subcontractors
         sub_budget = jdata["budget_sub"]
         sub_spend = sub_budget * progress * random.uniform(0.80, 1.10)
-        n_sub_txns = random.randint(2, 6)
+        n_sub_txns = max(1, _scaled_count(random.randint(2, 6), profile_scale))
         for _ in range(n_sub_txns):
             amount = round(sub_spend / n_sub_txns * random.uniform(0.6, 1.4), 2)
             vendor = random.choice(VENDORS[TransactionCategory.sub])
@@ -573,10 +597,12 @@ def seed(db: Session, reset: bool = False) -> dict:
                 )
             )
             txn_count += 1
+            if txn_count % 100 == 0:
+                _checkpoint(db)
 
         # Equipment rentals (some jobs)
         if random.random() < 0.6:
-            for _ in range(random.randint(1, 3)):
+            for _ in range(max(1, _scaled_count(random.randint(1, 3), profile_scale))):
                 vendor = random.choice(VENDORS[TransactionCategory.equipment])
                 amount = round(random.uniform(800, 4500), 2)
                 txn_date = _random_date_between(job_start, min(now, jdata["end"] or now))
@@ -592,9 +618,11 @@ def seed(db: Session, reset: bool = False) -> dict:
                     )
                 )
                 txn_count += 1
+            if txn_count % 100 == 0:
+                _checkpoint(db)
 
         # Permits
-        for _ in range(random.randint(1, 2)):
+        for _ in range(max(1, _scaled_count(random.randint(1, 2), profile_scale))):
             vendor = random.choice(VENDORS[TransactionCategory.permit])
             amount = round(random.uniform(250, 1800), 2)
             db.add(
@@ -609,9 +637,11 @@ def seed(db: Session, reset: bool = False) -> dict:
                 )
             )
             txn_count += 1
+            if txn_count % 100 == 0:
+                _checkpoint(db)
 
     # Unmapped GL transactions
-    for i in range(8):
+    for i in range(_scaled_count(8, profile_scale)):
         vendor = random.choice(["Unknown Supplier", "Cash Purchase", "Petty Cash", "Misc Vendor"])
         amount = round(random.uniform(100, 3000), 2)
         txn_date = _random_date_between(date(2024, 10, 1), now)
@@ -641,7 +671,7 @@ def seed(db: Session, reset: bool = False) -> dict:
 
         # Split into monthly progress billings
         job_start = jdata["start"]
-        n_invoices = max(1, int(billing_pct * 6))  # ~monthly
+        n_invoices = max(1, _scaled_count(int(billing_pct * 6), profile_scale))  # ~monthly
         for inv_idx in range(n_invoices):
             inv_amount = round(total_billed / n_invoices * random.uniform(0.8, 1.2), 2)
             inv_date = job_start + timedelta(days=30 * (inv_idx + 1))
@@ -662,6 +692,8 @@ def seed(db: Session, reset: bool = False) -> dict:
                 )
             )
             billing_count += 1
+            if billing_count % 50 == 0:
+                _checkpoint(db)
 
     counts["billing_records"] = billing_count
     db.flush()
@@ -766,7 +798,7 @@ def seed(db: Session, reset: bool = False) -> dict:
         while current <= sim_end:
             # Skip to next Friday
             days_until_friday = (4 - current.weekday()) % 7
-            if days_until_friday == 0 and current != job_start:
+            if days_until_friday == 0:
                 days_until_friday = 7
             current = current + timedelta(days=days_until_friday)
             if current > sim_end:
@@ -802,6 +834,8 @@ def seed(db: Session, reset: bool = False) -> dict:
                 )
             )
             metric_count += 1
+            if metric_count % 100 == 0:
+                _checkpoint(db)
 
     counts["daily_metrics"] = metric_count
 
@@ -813,8 +847,9 @@ def main():
     reset = "--reset" in sys.argv
     db = SessionLocal()
     try:
-        print("Seeding demo data..." + (" (with reset)" if reset else ""))
-        counts = seed(db, reset=reset)
+        profile = "lite" if "--lite" in sys.argv else "full" if "--full" in sys.argv else "lite"
+        print("Seeding demo data..." + (" (with reset)" if reset else "") + f" [profile={profile}]")
+        counts = seed(db, reset=reset, profile=profile)
         print("\nDemo data seeded successfully!")
         print("-" * 40)
         for key, val in counts.items():

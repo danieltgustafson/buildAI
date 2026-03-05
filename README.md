@@ -79,6 +79,13 @@ pytest -v
 | `POST` | `/seed/demo` | Seed database with demo data (admin only) |
 | `DELETE` | `/seed/demo` | Clear all data (remove all rows, keep schema, admin only) |
 | `GET` | `/ui` | Simple browser UI for login + CSV uploads + seeding |
+| `POST` | `/research/building-systems` | AI-assisted building system age research by address or ZIP discovery mode |
+
+Research endpoint uses an internal research-agent workflow with pluggable public-data tools. Current tools include OpenStreetMap Nominatim (address/metadata discovery) and Open-Meteo climate archive (context-aware stress signals) to drive flexible component age/risk determinations with explicit source strings.
+
+Outbound public-data requests send a configurable `User-Agent` via `RESEARCH_USER_AGENT` to comply with provider usage policies and identify the calling app.
+
+The service supports a true LLM-agent synthesis mode when `OPENAI_API_KEY` is configured: after data tools gather evidence, it calls the OpenAI Responses API (`OPENAI_RESEARCH_MODEL`) to produce component-level age/risk judgments from that evidence. If no API key is configured or the call fails, it falls back to deterministic rule-based scoring.
 
 Full interactive docs available at `/docs` when the API is running.
 

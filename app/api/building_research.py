@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth import get_current_user
 from app.schemas.building_research import ResearchRequest, ResearchResponse
-from app.services.building_research import run_building_system_research
+from app.services.building_research import OpenAIResearchUnavailableError, run_building_system_research
 
 router = APIRouter(prefix="/research", tags=["research"])
 
@@ -15,4 +15,7 @@ def research_building_systems(
     _user=Depends(get_current_user),
 ):
     """Research likely ages of major building systems from public-record style inputs."""
-    return run_building_system_research(payload)
+    try:
+        return run_building_system_research(payload)
+    except OpenAIResearchUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

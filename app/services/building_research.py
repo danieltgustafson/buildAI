@@ -150,6 +150,10 @@ class ClimateContextTool:
         )
 
 
+class OpenAIResearchUnavailableError(RuntimeError):
+    """Raised when building research cannot be completed with the OpenAI agent."""
+
+
 class BuildingResearchAgent:
     def __init__(self) -> None:
         self.discovery_tool = OSMNominatimTool()
@@ -175,56 +179,15 @@ class BuildingResearchAgent:
     def _assess_building(self, record: PublicRecordResult, payload: ResearchRequest) -> BuildingAssessment:
         components = _openai_agent_component_assessment(record, payload)
         if components is None:
-            components = _rule_based_component_assessment(record, payload)
+            raise OpenAIResearchUnavailableError(
+                "Building research requires a successful OpenAI agent response. "
+                "Check OPENAI_API_KEY and outbound connectivity."
+            )
         return BuildingAssessment(address=record.address, components=components)
 
 
 def run_building_system_research(payload: ResearchRequest) -> ResearchResponse:
     return BuildingResearchAgent().run(payload)
-
-
-def _rule_based_component_assessment(
-    record: PublicRecordResult,
-    payload: ResearchRequest,
-) -> list[ComponentAssessment]:
-    current_year = datetime.now().year
-    climate = _extract_climate(record.sources)
-    components: list[ComponentAssessment] = []
-
-    for component, base_life in BASE_USEFUL_LIFE_YEARS.items():
-        useful_life = _adjust_useful_life(base_life, component, payload, climate)
-        install_year = payload.system_install_years.get(component)
-
-        age_years = None
-        confidence = 0.35
-        source_parts = list(record.sources)
-
-        if install_year:
-            age_years = current_year - install_year
-            confidence = 0.95
-            source_parts = ["User-provided replacement/install year"]
-        elif component == "elevators" and record.elevator_present is False:
-            age_years = None
-            confidence = 0.9
-            source_parts.append("OSM tags indicate no elevator")
-        else:
-            baseline_year = payload.year_built or record.year_built
-            if baseline_year:
-                age_years = current_year - baseline_year
-                confidence = 0.65 if payload.year_built else 0.55
-                source_parts.append(f"Age estimated from building year {baseline_year}")
-
-        likelihood = _replacement_likelihood(age_years, useful_life)
-        components.append(
-            ComponentAssessment(
-                component=component,
-                age_years=age_years,
-                source="; ".join(source_parts),
-                replacement_likelihood_next_2y=likelihood,
-                confidence=confidence,
-            )
-        )
-    return components
 
 
 def _openai_agent_component_assessment(
@@ -433,43 +396,6 @@ def _open_meteo_climate_summary(lat: float, lon: float) -> ClimateSummary | None
     return ClimateSummary(hot_days=hot_days, freeze_days=freeze_days, heavy_precip_days=heavy_precip_days)
 
 
-def _extract_climate(sources: list[str]) -> ClimateSummary | None:
-    for source in sources:
-        if not source.startswith("Open-Meteo climate archive:"):
-            continue
-        m = re.search(r"hot_days=(\d+), freeze_days=(\d+), heavy_precip_days=(\d+)", source)
-        if not m:
-            continue
-        return ClimateSummary(
-            hot_days=int(m.group(1)),
-            freeze_days=int(m.group(2)),
-            heavy_precip_days=int(m.group(3)),
-        )
-    return None
-
-
-def _adjust_useful_life(
-    base_life: int,
-    component: str,
-    payload: ResearchRequest,
-    climate: ClimateSummary | None,
-) -> int:
-    useful_life = float(base_life)
-
-    if payload.building_type and payload.building_type.value in {"office", "industrial"} and component == "hvac":
-        useful_life -= 2
-
-    if climate is not None:
-        if component in {"roof", "windows"} and climate.heavy_precip_days > 40:
-            useful_life -= 2
-        if component in {"roof", "windows", "hvac"} and climate.freeze_days > 30:
-            useful_life -= 1
-        if component == "hvac" and climate.hot_days > 90:
-            useful_life -= 2
-
-    return max(int(round(useful_life)), 8)
-
-
 def _extract_year(extratags: dict[str, Any]) -> int | None:
     candidates = [extratags.get("start_date"), extratags.get("construction_date"), extratags.get("opening_date")]
     for value in candidates:
@@ -502,13 +428,3 @@ def _to_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
 
-
-def _replacement_likelihood(age_years: int | None, useful_life: int) -> str:
-    if age_years is None:
-        return "unknown"
-    ratio = age_years / useful_life
-    if ratio >= 1:
-        return "high"
-    if ratio >= 0.8:
-        return "medium"
-    return "low"

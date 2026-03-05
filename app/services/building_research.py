@@ -60,72 +60,106 @@ class OSMNominatimTool:
         return record
 
     def _search_single_address(self, address: str) -> PublicRecordResult:
-        params = {
-            "q": address,
-            "format": "jsonv2",
-            "addressdetails": 1,
-            "extratags": 1,
-            "namedetails": 0,
-            "limit": 1,
-        }
-        records = _nominatim_search(params)
-        if not records:
-            return PublicRecordResult(
-                address=address,
-                lat=None,
-                lon=None,
-                year_built=None,
-                elevator_present=None,
-                sources=["Nominatim: no match for provided address"],
+        queries = _address_query_variants(address)
+        for q in queries:
+            records = _nominatim_search(
+                {
+                    "q": q,
+                    "format": "jsonv2",
+                    "addressdetails": 1,
+                    "extratags": 1,
+                    "namedetails": 0,
+                    "limit": 1,
+                    "countrycodes": "us",
+                }
             )
+            if records:
+                item = records[0]
+                extratags = item.get("extratags") or {}
+                parsed_address = item.get("display_name") or address
+                return PublicRecordResult(
+                    address=parsed_address,
+                    lat=_to_float(item.get("lat")),
+                    lon=_to_float(item.get("lon")),
+                    year_built=_extract_year(extratags),
+                    elevator_present=_extract_elevator(extratags),
+                    sources=[f"OpenStreetMap Nominatim geocoder + OSM tags (query: {q})"],
+                )
 
-        item = records[0]
-        extratags = item.get("extratags") or {}
-        parsed_address = item.get("display_name") or address
         return PublicRecordResult(
-            address=parsed_address,
-            lat=_to_float(item.get("lat")),
-            lon=_to_float(item.get("lon")),
-            year_built=_extract_year(extratags),
-            elevator_present=_extract_elevator(extratags),
-            sources=["OpenStreetMap Nominatim geocoder + OSM tags"],
+            address=address,
+            lat=None,
+            lon=None,
+            year_built=None,
+            elevator_present=None,
+            sources=["Nominatim: no match for provided address after fallback queries"],
         )
 
     def _search_zip_candidates(self, payload: ResearchRequest) -> list[PublicRecordResult]:
         building_hint = payload.building_type.value.replace("_", " ") if payload.building_type else "building"
-        params = {
-            "q": f"{building_hint} in {payload.zip_code}",
-            "format": "jsonv2",
-            "addressdetails": 1,
-            "extratags": 1,
-            "namedetails": 0,
-            "limit": payload.max_candidate_addresses,
-            "countrycodes": "us",
-        }
-        records = _nominatim_search(params)
-        if not records:
+        zip_code = _normalize_zip_code(payload.zip_code)
+        candidate_params = [
+            {
+                "q": f"{building_hint} in {zip_code}",
+                "countrycodes": "us",
+            },
+            {
+                "q": f"{zip_code}, USA",
+                "countrycodes": "us",
+            },
+            {
+                "postalcode": zip_code,
+                "country": "United States",
+            },
+        ]
+
+        seen: set[tuple[str, str, str]] = set()
+        results: list[PublicRecordResult] = []
+        for params in candidate_params:
+            search_params = {
+                **params,
+                "format": "jsonv2",
+                "addressdetails": 1,
+                "extratags": 1,
+                "namedetails": 0,
+                "limit": payload.max_candidate_addresses,
+            }
+            records = _nominatim_search(search_params)
+            for item in records:
+                key = (
+                    str(item.get("display_name") or "").strip().lower(),
+                    str(item.get("lat") or ""),
+                    str(item.get("lon") or ""),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                query_desc = params.get("q") or f"postalcode={zip_code}"
+                results.append(
+                    PublicRecordResult(
+                        address=item.get("display_name", f"ZIP {zip_code} candidate"),
+                        lat=_to_float(item.get("lat")),
+                        lon=_to_float(item.get("lon")),
+                        year_built=_extract_year(item.get("extratags") or {}),
+                        elevator_present=_extract_elevator(item.get("extratags") or {}),
+                        sources=[f"OpenStreetMap Nominatim geocoder + OSM tags (query: {query_desc})"],
+                    )
+                )
+                if len(results) >= payload.max_candidate_addresses:
+                    return results
+
+        if not results:
             return [
                 PublicRecordResult(
-                    address=f"ZIP {payload.zip_code} (no candidates found)",
+                    address=f"ZIP {zip_code} (no candidates found)",
                     lat=None,
                     lon=None,
                     year_built=None,
                     elevator_present=None,
-                    sources=["Nominatim: no candidates for ZIP/building type search"],
+                    sources=["Nominatim: no candidates found for ZIP after broad fallback queries"],
                 )
             ]
-
-        return [
-            PublicRecordResult(
-                address=item.get("display_name", f"ZIP {payload.zip_code} candidate"),
-                lat=_to_float(item.get("lat")),
-                lon=_to_float(item.get("lon")),
-                year_built=_extract_year(item.get("extratags") or {}),
-                elevator_present=_extract_elevator(item.get("extratags") or {}),
-                sources=["OpenStreetMap Nominatim geocoder + OSM tags"],
-            )
-            for item in records
-        ]
+        return results
 
 
 class ClimateContextTool:
@@ -338,6 +372,44 @@ def _normalize_component_assessments(parsed: dict[str, Any]) -> list[ComponentAs
             )
 
     return [by_name[name] for name in BASE_USEFUL_LIFE_YEARS]
+
+
+def _address_query_variants(address: str) -> list[str]:
+    base = address.strip()
+    if not base:
+        return []
+
+    variants = [base]
+    without_unit = re.sub(
+        r"(?:,?\s*(?:apt|apartment|unit|suite|ste|#)\s*[a-z0-9-]+)",
+        "",
+        base,
+        flags=re.IGNORECASE,
+    )
+    without_unit = re.sub(r"\s+", " ", without_unit).strip(" ,")
+    if without_unit and without_unit != base:
+        variants.append(without_unit)
+
+    if "usa" not in base.lower():
+        variants.append(f"{without_unit or base}, USA")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in variants:
+        key = item.strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(item.strip())
+    return deduped
+
+
+def _normalize_zip_code(zip_code: str | None) -> str:
+    if not zip_code:
+        return ""
+    digits = "".join(ch for ch in zip_code if ch.isdigit())
+    if len(digits) >= 5:
+        return digits[:5]
+    return zip_code.strip()
 
 
 def _research_headers() -> dict[str, str]:

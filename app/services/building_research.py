@@ -26,6 +26,8 @@ BASE_USEFUL_LIFE_YEARS = {
 NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
 OPEN_METEO_ARCHIVE_BASE = "https://archive-api.open-meteo.com/v1/archive"
 OPENAI_RESPONSES_BASE = "https://api.openai.com/v1/responses"
+CENSUS_GEOCODER_BASE = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
+ZIPPOPOTAM_BASE = "https://api.zippopotam.us"
 
 
 @dataclass
@@ -86,13 +88,25 @@ class OSMNominatimTool:
                     sources=[f"OpenStreetMap Nominatim geocoder + OSM tags (query: {q})"],
                 )
 
+        for q in queries:
+            census_match = _census_geocode_single_line(q)
+            if census_match:
+                return PublicRecordResult(
+                    address=census_match["address"],
+                    lat=census_match["lat"],
+                    lon=census_match["lon"],
+                    year_built=None,
+                    elevator_present=None,
+                    sources=[f"US Census Geocoder (query: {q})"],
+                )
+
         return PublicRecordResult(
             address=address,
             lat=None,
             lon=None,
             year_built=None,
             elevator_present=None,
-            sources=["Nominatim: no match for provided address after fallback queries"],
+            sources=["No match from Nominatim or Census Geocoder for provided address"],
         )
 
     def _search_zip_candidates(self, payload: ResearchRequest) -> list[PublicRecordResult]:
@@ -149,6 +163,18 @@ class OSMNominatimTool:
                     return results
 
         if not results:
+            zip_place = _zippopotam_zip_centroid(zip_code)
+            if zip_place:
+                return [
+                    PublicRecordResult(
+                        address=zip_place["address"],
+                        lat=zip_place["lat"],
+                        lon=zip_place["lon"],
+                        year_built=None,
+                        elevator_present=None,
+                        sources=["Zippopotam.us ZIP centroid fallback"],
+                    )
+                ]
             return [
                 PublicRecordResult(
                     address=f"ZIP {zip_code} (no candidates found)",
@@ -156,7 +182,7 @@ class OSMNominatimTool:
                     lon=None,
                     year_built=None,
                     elevator_present=None,
-                    sources=["Nominatim: no candidates found for ZIP after broad fallback queries"],
+                    sources=["No candidates from Nominatim or ZIP centroid fallback"],
                 )
             ]
         return results
@@ -410,6 +436,70 @@ def _normalize_zip_code(zip_code: str | None) -> str:
     if len(digits) >= 5:
         return digits[:5]
     return zip_code.strip()
+
+
+def _census_geocode_single_line(address: str) -> dict[str, Any] | None:
+    try:
+        with httpx.Client(timeout=8.0, headers=_research_headers()) as client:
+            response = client.get(
+                CENSUS_GEOCODER_BASE,
+                params={
+                    "address": address,
+                    "benchmark": "Public_AR_Current",
+                    "format": "json",
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except Exception:
+        return None
+
+    matches = payload.get("result", {}).get("addressMatches", []) if isinstance(payload, dict) else []
+    if not isinstance(matches, list) or not matches:
+        return None
+
+    first = matches[0] if isinstance(matches[0], dict) else None
+    if not first:
+        return None
+    coords = first.get("coordinates") or {}
+    lat = _to_float(coords.get("y"))
+    lon = _to_float(coords.get("x"))
+    if lat is None or lon is None:
+        return None
+    return {
+        "address": str(first.get("matchedAddress") or address),
+        "lat": lat,
+        "lon": lon,
+    }
+
+
+def _zippopotam_zip_centroid(zip_code: str) -> dict[str, Any] | None:
+    if not zip_code:
+        return None
+    try:
+        with httpx.Client(timeout=8.0, headers=_research_headers()) as client:
+            response = client.get(f"{ZIPPOPOTAM_BASE}/us/{zip_code}")
+            response.raise_for_status()
+            payload = response.json()
+    except Exception:
+        return None
+
+    places = payload.get("places") if isinstance(payload, dict) else None
+    if not isinstance(places, list) or not places:
+        return None
+    first = places[0] if isinstance(places[0], dict) else None
+    if not first:
+        return None
+
+    lat = _to_float(first.get("latitude"))
+    lon = _to_float(first.get("longitude"))
+    if lat is None or lon is None:
+        return None
+
+    place_name = str(first.get("place name") or "Unknown Place")
+    state = str(first.get("state abbreviation") or first.get("state") or "")
+    formatted = f"ZIP {zip_code} centroid ({place_name}{', ' + state if state else ''})"
+    return {"address": formatted, "lat": lat, "lon": lon}
 
 
 def _research_headers() -> dict[str, str]:

@@ -102,6 +102,11 @@ def test_upload_ui_page(client):
     resp = client.get("/ui")
     assert resp.status_code == 200
     assert "Upload UI" in resp.text
+    assert "WIP Report" in resp.text
+    assert "Download CSV" in resp.text
+    assert "safeRequest" in resp.text
+    assert "unhandledrejection" in resp.text
+    assert "needsQuotes" in resp.text
 
 
 def test_seed_profile_validation(client):

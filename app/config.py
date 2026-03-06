@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     research_user_agent: str = "contractor-ops-ai/0.1 (+public-record-research-agent; contact:ops@example.com)"
     openai_api_key: str | None = None
     openai_research_model: str = "gpt-4.1-mini"
+    openai_research_use_web_search: bool = True
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

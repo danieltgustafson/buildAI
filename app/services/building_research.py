@@ -28,6 +28,7 @@ OPEN_METEO_ARCHIVE_BASE = "https://archive-api.open-meteo.com/v1/archive"
 OPENAI_RESPONSES_BASE = "https://api.openai.com/v1/responses"
 CENSUS_GEOCODER_BASE = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
 ZIPPOPOTAM_BASE = "https://api.zippopotam.us"
+MAPSCO_SEARCH_BASE = "https://geocode.maps.co/search"
 
 
 @dataclass
@@ -100,13 +101,26 @@ class OSMNominatimTool:
                     sources=[f"US Census Geocoder (query: {q})"],
                 )
 
+        for q in queries:
+            mapsco = _mapsco_search(q, limit=1)
+            if mapsco:
+                item = mapsco[0]
+                return PublicRecordResult(
+                    address=item["address"],
+                    lat=item["lat"],
+                    lon=item["lon"],
+                    year_built=None,
+                    elevator_present=None,
+                    sources=[f"Maps.co geocoder fallback (query: {q})"],
+                )
+
         return PublicRecordResult(
             address=address,
             lat=None,
             lon=None,
             year_built=None,
             elevator_present=None,
-            sources=["No match from Nominatim or Census Geocoder for provided address"],
+            sources=["No match from Nominatim/Census/Maps.co for provided address"],
         )
 
     def _search_zip_candidates(self, payload: ResearchRequest) -> list[PublicRecordResult]:
@@ -165,6 +179,34 @@ class OSMNominatimTool:
         if not results:
             zip_place = _zippopotam_zip_centroid(zip_code)
             if zip_place:
+                place_label = zip_place["address"].replace(f"ZIP {zip_code} centroid", "").strip(" ()")
+                mapsco_queries = [
+                    f"{building_hint} near {place_label} {zip_code}",
+                    f"{zip_code} {building_hint}",
+                    f"{zip_code} USA",
+                ]
+                for q in mapsco_queries:
+                    for item in _mapsco_search(q, limit=payload.max_candidate_addresses):
+                        key = (item["address"].strip().lower(), str(item["lat"]), str(item["lon"]))
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        results.append(
+                            PublicRecordResult(
+                                address=item["address"],
+                                lat=item["lat"],
+                                lon=item["lon"],
+                                year_built=None,
+                                elevator_present=None,
+                                sources=[f"Maps.co geocoder fallback (query: {q})"],
+                            )
+                        )
+                        if len(results) >= payload.max_candidate_addresses:
+                            return results
+
+                if results:
+                    return results
+
                 return [
                     PublicRecordResult(
                         address=zip_place["address"],
@@ -175,6 +217,7 @@ class OSMNominatimTool:
                         sources=["Zippopotam.us ZIP centroid fallback"],
                     )
                 ]
+
             return [
                 PublicRecordResult(
                     address=f"ZIP {zip_code} (no candidates found)",
@@ -182,7 +225,7 @@ class OSMNominatimTool:
                     lon=None,
                     year_built=None,
                     elevator_present=None,
-                    sources=["No candidates from Nominatim or ZIP centroid fallback"],
+                    sources=["No candidates from Nominatim, Maps.co, or ZIP centroid fallback"],
                 )
             ]
         return results
@@ -268,14 +311,16 @@ def _openai_agent_component_assessment(
 
     instructions = (
         "You are a building systems research agent. Given evidence from public data tools, "
-        "produce conservative estimates for roof/windows/hvac/elevators. "
+        "run multiple search queries and cross-check diverse sources (public records, listings, local assessor/permit pages, "
+        "manufacturer lifecycle guidance, and climate context) before estimating roof/windows/hvac/elevators. "
+        "When tools are available, actively use web search to broaden coverage instead of relying on one source. "
         "Return strict JSON with this shape: "
         '{"components": [{"component": "roof", "age_years": 10 or null, "source": "...", '
         '"replacement_likelihood_next_2y": "low|medium|high|unknown", "confidence": 0.0-1.0}]}. '
-        "Do not include markdown."
+        "Each source string should name concrete evidence. Do not include markdown."
     )
 
-    payload_json = {
+    payload_json: dict[str, Any] = {
         "model": settings.openai_research_model,
         "input": [
             {"role": "system", "content": [{"type": "input_text", "text": instructions}]},
@@ -283,6 +328,8 @@ def _openai_agent_component_assessment(
         ],
         "temperature": 0.2,
     }
+    if settings.openai_research_use_web_search:
+        payload_json["tools"] = [{"type": "web_search_preview"}]
 
     try:
         with httpx.Client(timeout=20.0) as client:
@@ -500,6 +547,37 @@ def _zippopotam_zip_centroid(zip_code: str) -> dict[str, Any] | None:
     state = str(first.get("state abbreviation") or first.get("state") or "")
     formatted = f"ZIP {zip_code} centroid ({place_name}{', ' + state if state else ''})"
     return {"address": formatted, "lat": lat, "lon": lon}
+
+
+def _mapsco_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
+    if not query.strip():
+        return []
+    params = {
+        "q": query,
+        "limit": max(1, min(limit, 20)),
+    }
+    try:
+        with httpx.Client(timeout=8.0, headers=_research_headers()) as client:
+            response = client.get(MAPSCO_SEARCH_BASE, params=params)
+            response.raise_for_status()
+            payload = response.json()
+    except Exception:
+        return []
+
+    if not isinstance(payload, list):
+        return []
+
+    results: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        lat = _to_float(item.get("lat"))
+        lon = _to_float(item.get("lon"))
+        if lat is None or lon is None:
+            continue
+        address = str(item.get("display_name") or query)
+        results.append({"address": address, "lat": lat, "lon": lon})
+    return results
 
 
 def _research_headers() -> dict[str, str]:

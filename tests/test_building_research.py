@@ -392,3 +392,65 @@ def test_research_accepts_zip_in_address_field(client, monkeypatch):
     resp = client.post("/research/building-systems", json={"address": "10001", "building_type": "office"})
     assert resp.status_code == 200
     assert resp.json()["mode"] == "zip_discovery"
+
+
+def test_research_address_falls_back_to_mapsco(client, monkeypatch):
+    monkeypatch.setattr(building_research, "_nominatim_search", lambda _params: [])
+    monkeypatch.setattr(building_research, "_census_geocode_single_line", lambda _q: None)
+    monkeypatch.setattr(
+        building_research,
+        "_mapsco_search",
+        lambda _q, limit=1: [{"address": "321 Pine St, Austin, TX", "lat": 30.26, "lon": -97.75}],
+    )
+    monkeypatch.setattr(building_research, "_open_meteo_climate_summary", lambda _lat, _lon: None)
+    monkeypatch.setattr(
+        building_research,
+        "_openai_agent_component_assessment",
+        lambda _r, _p: [
+            building_research.ComponentAssessment(component="roof", age_years=8, source="OpenAI", replacement_likelihood_next_2y="low", confidence=0.8),
+            building_research.ComponentAssessment(component="windows", age_years=8, source="OpenAI", replacement_likelihood_next_2y="low", confidence=0.8),
+            building_research.ComponentAssessment(component="hvac", age_years=8, source="OpenAI", replacement_likelihood_next_2y="low", confidence=0.8),
+            building_research.ComponentAssessment(component="elevators", age_years=8, source="OpenAI", replacement_likelihood_next_2y="low", confidence=0.8),
+        ],
+    )
+
+    resp = client.post(
+        "/research/building-systems",
+        json={"address": "321 Pine St, Austin, TX", "building_type": "office"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["candidate_addresses"] == ["321 Pine St, Austin, TX"]
+
+
+def test_research_zip_falls_back_to_mapsco_before_centroid(client, monkeypatch):
+    monkeypatch.setattr(building_research, "_nominatim_search", lambda _params: [])
+    monkeypatch.setattr(
+        building_research,
+        "_zippopotam_zip_centroid",
+        lambda _zip: {"address": "ZIP 78701 centroid (Austin, TX)", "lat": 30.271, "lon": -97.742},
+    )
+
+    def _mapsco(query, limit=5):
+        if "near" in query:
+            return [{"address": "500 Congress Ave, Austin, TX", "lat": 30.268, "lon": -97.742}]
+        return []
+
+    monkeypatch.setattr(building_research, "_mapsco_search", _mapsco)
+    monkeypatch.setattr(building_research, "_open_meteo_climate_summary", lambda _lat, _lon: None)
+    monkeypatch.setattr(
+        building_research,
+        "_openai_agent_component_assessment",
+        lambda _r, _p: [
+            building_research.ComponentAssessment(component="roof", age_years=8, source="OpenAI", replacement_likelihood_next_2y="low", confidence=0.8),
+            building_research.ComponentAssessment(component="windows", age_years=8, source="OpenAI", replacement_likelihood_next_2y="low", confidence=0.8),
+            building_research.ComponentAssessment(component="hvac", age_years=8, source="OpenAI", replacement_likelihood_next_2y="low", confidence=0.8),
+            building_research.ComponentAssessment(component="elevators", age_years=8, source="OpenAI", replacement_likelihood_next_2y="low", confidence=0.8),
+        ],
+    )
+
+    resp = client.post(
+        "/research/building-systems",
+        json={"zip_code": "78701", "building_type": "office", "max_candidate_addresses": 2},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["candidate_addresses"] == ["500 Congress Ave, Austin, TX"]

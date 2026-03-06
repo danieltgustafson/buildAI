@@ -104,6 +104,8 @@ def test_upload_ui_page(client):
     assert "Upload UI" in resp.text
     assert "WIP Report" in resp.text
     assert "Download CSV" in resp.text
+    assert "safeRequest" in resp.text
+    assert "unhandledrejection" in resp.text
 
 
 def test_seed_profile_validation(client):

@@ -26,6 +26,8 @@ BASE_USEFUL_LIFE_YEARS = {
 NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
 OPEN_METEO_ARCHIVE_BASE = "https://archive-api.open-meteo.com/v1/archive"
 OPENAI_RESPONSES_BASE = "https://api.openai.com/v1/responses"
+CENSUS_GEOCODER_BASE = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
+ZIPPOPOTAM_BASE = "https://api.zippopotam.us"
 
 
 @dataclass
@@ -60,72 +62,130 @@ class OSMNominatimTool:
         return record
 
     def _search_single_address(self, address: str) -> PublicRecordResult:
-        params = {
-            "q": address,
-            "format": "jsonv2",
-            "addressdetails": 1,
-            "extratags": 1,
-            "namedetails": 0,
-            "limit": 1,
-        }
-        records = _nominatim_search(params)
-        if not records:
-            return PublicRecordResult(
-                address=address,
-                lat=None,
-                lon=None,
-                year_built=None,
-                elevator_present=None,
-                sources=["Nominatim: no match for provided address"],
+        queries = _address_query_variants(address)
+        for q in queries:
+            records = _nominatim_search(
+                {
+                    "q": q,
+                    "format": "jsonv2",
+                    "addressdetails": 1,
+                    "extratags": 1,
+                    "namedetails": 0,
+                    "limit": 1,
+                    "countrycodes": "us",
+                }
             )
+            if records:
+                item = records[0]
+                extratags = item.get("extratags") or {}
+                parsed_address = item.get("display_name") or address
+                return PublicRecordResult(
+                    address=parsed_address,
+                    lat=_to_float(item.get("lat")),
+                    lon=_to_float(item.get("lon")),
+                    year_built=_extract_year(extratags),
+                    elevator_present=_extract_elevator(extratags),
+                    sources=[f"OpenStreetMap Nominatim geocoder + OSM tags (query: {q})"],
+                )
 
-        item = records[0]
-        extratags = item.get("extratags") or {}
-        parsed_address = item.get("display_name") or address
+        for q in queries:
+            census_match = _census_geocode_single_line(q)
+            if census_match:
+                return PublicRecordResult(
+                    address=census_match["address"],
+                    lat=census_match["lat"],
+                    lon=census_match["lon"],
+                    year_built=None,
+                    elevator_present=None,
+                    sources=[f"US Census Geocoder (query: {q})"],
+                )
+
         return PublicRecordResult(
-            address=parsed_address,
-            lat=_to_float(item.get("lat")),
-            lon=_to_float(item.get("lon")),
-            year_built=_extract_year(extratags),
-            elevator_present=_extract_elevator(extratags),
-            sources=["OpenStreetMap Nominatim geocoder + OSM tags"],
+            address=address,
+            lat=None,
+            lon=None,
+            year_built=None,
+            elevator_present=None,
+            sources=["No match from Nominatim or Census Geocoder for provided address"],
         )
 
     def _search_zip_candidates(self, payload: ResearchRequest) -> list[PublicRecordResult]:
         building_hint = payload.building_type.value.replace("_", " ") if payload.building_type else "building"
-        params = {
-            "q": f"{building_hint} in {payload.zip_code}",
-            "format": "jsonv2",
-            "addressdetails": 1,
-            "extratags": 1,
-            "namedetails": 0,
-            "limit": payload.max_candidate_addresses,
-            "countrycodes": "us",
-        }
-        records = _nominatim_search(params)
-        if not records:
+        zip_code = _normalize_zip_code(payload.zip_code)
+        candidate_params = [
+            {
+                "q": f"{building_hint} in {zip_code}",
+                "countrycodes": "us",
+            },
+            {
+                "q": f"{zip_code}, USA",
+                "countrycodes": "us",
+            },
+            {
+                "postalcode": zip_code,
+                "country": "United States",
+            },
+        ]
+
+        seen: set[tuple[str, str, str]] = set()
+        results: list[PublicRecordResult] = []
+        for params in candidate_params:
+            search_params = {
+                **params,
+                "format": "jsonv2",
+                "addressdetails": 1,
+                "extratags": 1,
+                "namedetails": 0,
+                "limit": payload.max_candidate_addresses,
+            }
+            records = _nominatim_search(search_params)
+            for item in records:
+                key = (
+                    str(item.get("display_name") or "").strip().lower(),
+                    str(item.get("lat") or ""),
+                    str(item.get("lon") or ""),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                query_desc = params.get("q") or f"postalcode={zip_code}"
+                results.append(
+                    PublicRecordResult(
+                        address=item.get("display_name", f"ZIP {zip_code} candidate"),
+                        lat=_to_float(item.get("lat")),
+                        lon=_to_float(item.get("lon")),
+                        year_built=_extract_year(item.get("extratags") or {}),
+                        elevator_present=_extract_elevator(item.get("extratags") or {}),
+                        sources=[f"OpenStreetMap Nominatim geocoder + OSM tags (query: {query_desc})"],
+                    )
+                )
+                if len(results) >= payload.max_candidate_addresses:
+                    return results
+
+        if not results:
+            zip_place = _zippopotam_zip_centroid(zip_code)
+            if zip_place:
+                return [
+                    PublicRecordResult(
+                        address=zip_place["address"],
+                        lat=zip_place["lat"],
+                        lon=zip_place["lon"],
+                        year_built=None,
+                        elevator_present=None,
+                        sources=["Zippopotam.us ZIP centroid fallback"],
+                    )
+                ]
             return [
                 PublicRecordResult(
-                    address=f"ZIP {payload.zip_code} (no candidates found)",
+                    address=f"ZIP {zip_code} (no candidates found)",
                     lat=None,
                     lon=None,
                     year_built=None,
                     elevator_present=None,
-                    sources=["Nominatim: no candidates for ZIP/building type search"],
+                    sources=["No candidates from Nominatim or ZIP centroid fallback"],
                 )
             ]
-
-        return [
-            PublicRecordResult(
-                address=item.get("display_name", f"ZIP {payload.zip_code} candidate"),
-                lat=_to_float(item.get("lat")),
-                lon=_to_float(item.get("lon")),
-                year_built=_extract_year(item.get("extratags") or {}),
-                elevator_present=_extract_elevator(item.get("extratags") or {}),
-                sources=["OpenStreetMap Nominatim geocoder + OSM tags"],
-            )
-            for item in records
-        ]
+        return results
 
 
 class ClimateContextTool:
@@ -148,6 +208,10 @@ class ClimateContextTool:
             elevator_present=record.elevator_present,
             sources=[*record.sources, notes],
         )
+
+
+class OpenAIResearchUnavailableError(RuntimeError):
+    """Raised when building research cannot be completed with the OpenAI agent."""
 
 
 class BuildingResearchAgent:
@@ -175,56 +239,15 @@ class BuildingResearchAgent:
     def _assess_building(self, record: PublicRecordResult, payload: ResearchRequest) -> BuildingAssessment:
         components = _openai_agent_component_assessment(record, payload)
         if components is None:
-            components = _rule_based_component_assessment(record, payload)
+            raise OpenAIResearchUnavailableError(
+                "Building research requires a successful OpenAI agent response. "
+                "Check OPENAI_API_KEY and outbound connectivity."
+            )
         return BuildingAssessment(address=record.address, components=components)
 
 
 def run_building_system_research(payload: ResearchRequest) -> ResearchResponse:
     return BuildingResearchAgent().run(payload)
-
-
-def _rule_based_component_assessment(
-    record: PublicRecordResult,
-    payload: ResearchRequest,
-) -> list[ComponentAssessment]:
-    current_year = datetime.now().year
-    climate = _extract_climate(record.sources)
-    components: list[ComponentAssessment] = []
-
-    for component, base_life in BASE_USEFUL_LIFE_YEARS.items():
-        useful_life = _adjust_useful_life(base_life, component, payload, climate)
-        install_year = payload.system_install_years.get(component)
-
-        age_years = None
-        confidence = 0.35
-        source_parts = list(record.sources)
-
-        if install_year:
-            age_years = current_year - install_year
-            confidence = 0.95
-            source_parts = ["User-provided replacement/install year"]
-        elif component == "elevators" and record.elevator_present is False:
-            age_years = None
-            confidence = 0.9
-            source_parts.append("OSM tags indicate no elevator")
-        else:
-            baseline_year = payload.year_built or record.year_built
-            if baseline_year:
-                age_years = current_year - baseline_year
-                confidence = 0.65 if payload.year_built else 0.55
-                source_parts.append(f"Age estimated from building year {baseline_year}")
-
-        likelihood = _replacement_likelihood(age_years, useful_life)
-        components.append(
-            ComponentAssessment(
-                component=component,
-                age_years=age_years,
-                source="; ".join(source_parts),
-                replacement_likelihood_next_2y=likelihood,
-                confidence=confidence,
-            )
-        )
-    return components
 
 
 def _openai_agent_component_assessment(
@@ -377,6 +400,108 @@ def _normalize_component_assessments(parsed: dict[str, Any]) -> list[ComponentAs
     return [by_name[name] for name in BASE_USEFUL_LIFE_YEARS]
 
 
+def _address_query_variants(address: str) -> list[str]:
+    base = address.strip()
+    if not base:
+        return []
+
+    variants = [base]
+    without_unit = re.sub(
+        r"(?:,?\s*(?:apt|apartment|unit|suite|ste|#)\s*[a-z0-9-]+)",
+        "",
+        base,
+        flags=re.IGNORECASE,
+    )
+    without_unit = re.sub(r"\s+", " ", without_unit).strip(" ,")
+    if without_unit and without_unit != base:
+        variants.append(without_unit)
+
+    if "usa" not in base.lower():
+        variants.append(f"{without_unit or base}, USA")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in variants:
+        key = item.strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(item.strip())
+    return deduped
+
+
+def _normalize_zip_code(zip_code: str | None) -> str:
+    if not zip_code:
+        return ""
+    digits = "".join(ch for ch in zip_code if ch.isdigit())
+    if len(digits) >= 5:
+        return digits[:5]
+    return zip_code.strip()
+
+
+def _census_geocode_single_line(address: str) -> dict[str, Any] | None:
+    try:
+        with httpx.Client(timeout=8.0, headers=_research_headers()) as client:
+            response = client.get(
+                CENSUS_GEOCODER_BASE,
+                params={
+                    "address": address,
+                    "benchmark": "Public_AR_Current",
+                    "format": "json",
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except Exception:
+        return None
+
+    matches = payload.get("result", {}).get("addressMatches", []) if isinstance(payload, dict) else []
+    if not isinstance(matches, list) or not matches:
+        return None
+
+    first = matches[0] if isinstance(matches[0], dict) else None
+    if not first:
+        return None
+    coords = first.get("coordinates") or {}
+    lat = _to_float(coords.get("y"))
+    lon = _to_float(coords.get("x"))
+    if lat is None or lon is None:
+        return None
+    return {
+        "address": str(first.get("matchedAddress") or address),
+        "lat": lat,
+        "lon": lon,
+    }
+
+
+def _zippopotam_zip_centroid(zip_code: str) -> dict[str, Any] | None:
+    if not zip_code:
+        return None
+    try:
+        with httpx.Client(timeout=8.0, headers=_research_headers()) as client:
+            response = client.get(f"{ZIPPOPOTAM_BASE}/us/{zip_code}")
+            response.raise_for_status()
+            payload = response.json()
+    except Exception:
+        return None
+
+    places = payload.get("places") if isinstance(payload, dict) else None
+    if not isinstance(places, list) or not places:
+        return None
+    first = places[0] if isinstance(places[0], dict) else None
+    if not first:
+        return None
+
+    lat = _to_float(first.get("latitude"))
+    lon = _to_float(first.get("longitude"))
+    if lat is None or lon is None:
+        return None
+
+    place_name = str(first.get("place name") or "Unknown Place")
+    state = str(first.get("state abbreviation") or first.get("state") or "")
+    formatted = f"ZIP {zip_code} centroid ({place_name}{', ' + state if state else ''})"
+    return {"address": formatted, "lat": lat, "lon": lon}
+
+
 def _research_headers() -> dict[str, str]:
     """Headers for outbound research HTTP calls.
 
@@ -433,43 +558,6 @@ def _open_meteo_climate_summary(lat: float, lon: float) -> ClimateSummary | None
     return ClimateSummary(hot_days=hot_days, freeze_days=freeze_days, heavy_precip_days=heavy_precip_days)
 
 
-def _extract_climate(sources: list[str]) -> ClimateSummary | None:
-    for source in sources:
-        if not source.startswith("Open-Meteo climate archive:"):
-            continue
-        m = re.search(r"hot_days=(\d+), freeze_days=(\d+), heavy_precip_days=(\d+)", source)
-        if not m:
-            continue
-        return ClimateSummary(
-            hot_days=int(m.group(1)),
-            freeze_days=int(m.group(2)),
-            heavy_precip_days=int(m.group(3)),
-        )
-    return None
-
-
-def _adjust_useful_life(
-    base_life: int,
-    component: str,
-    payload: ResearchRequest,
-    climate: ClimateSummary | None,
-) -> int:
-    useful_life = float(base_life)
-
-    if payload.building_type and payload.building_type.value in {"office", "industrial"} and component == "hvac":
-        useful_life -= 2
-
-    if climate is not None:
-        if component in {"roof", "windows"} and climate.heavy_precip_days > 40:
-            useful_life -= 2
-        if component in {"roof", "windows", "hvac"} and climate.freeze_days > 30:
-            useful_life -= 1
-        if component == "hvac" and climate.hot_days > 90:
-            useful_life -= 2
-
-    return max(int(round(useful_life)), 8)
-
-
 def _extract_year(extratags: dict[str, Any]) -> int | None:
     candidates = [extratags.get("start_date"), extratags.get("construction_date"), extratags.get("opening_date")]
     for value in candidates:
@@ -502,13 +590,3 @@ def _to_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
 
-
-def _replacement_likelihood(age_years: int | None, useful_life: int) -> str:
-    if age_years is None:
-        return "unknown"
-    ratio = age_years / useful_life
-    if ratio >= 1:
-        return "high"
-    if ratio >= 0.8:
-        return "medium"
-    return "low"

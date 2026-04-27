@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,7 +29,7 @@ _seed_state: dict[str, Any] = {
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(datetime.UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _normalize_profile(profile: str) -> str:

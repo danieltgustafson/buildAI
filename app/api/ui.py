@@ -289,7 +289,7 @@ function downloadWipCsv() {
     if (value === null || value === undefined) return '';
     const text = Array.isArray(value) ? value.join('|') : String(value);
     const escaped = text.split('"').join('""');
-    return /[",\n]/.test(text) ? `"${escaped}"` : text;
+    return /[",\\n]/.test(text) ? `"${escaped}"` : text;
   };
 
   const lines = [headers.join(',')];

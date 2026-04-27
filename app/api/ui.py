@@ -5,12 +5,25 @@ from fastapi.responses import HTMLResponse
 
 router = APIRouter(tags=["ui"])
 
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "connect-src 'self';"
+)
 
-@router.get("/", response_class=HTMLResponse, include_in_schema=False)
-@router.get("/ui", response_class=HTMLResponse, include_in_schema=False)
-def upload_ui() -> str:
+_HEADERS = {"Content-Security-Policy": _CSP, "X-Content-Type-Options": "nosniff"}
+
+
+@router.get("/", include_in_schema=False)
+@router.get("/ui", include_in_schema=False)
+def upload_ui() -> HTMLResponse:
     """Return a simple page for token login, seeding, and CSV uploads."""
-    return """
+    return HTMLResponse(content=_HTML, headers=_HEADERS)
+
+
+_HTML = """
 <!doctype html>
 <html>
 <head>
@@ -30,6 +43,7 @@ def upload_ui() -> str:
   </style>
 </head>
 <body>
+  <noscript><p style="color:red;font-weight:bold">⚠ JavaScript is blocked or disabled — buttons will not work.</p></noscript>
   <h1>Contractor Ops – Upload UI (POC)</h1>
   <p>Use this page to login, seed demo data, upload CSVs, and view a simple WIP chart/report.</p>
 

@@ -17,5 +17,7 @@ class Employee(Base):
     adp_employee_ref: Mapped[Optional[str]] = mapped_column(String(100), unique=True, nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    crew_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     time_entries = relationship("TimeEntry", back_populates="employee", lazy="dynamic")
+    schedule_assignments = relationship("ScheduleAssignment", back_populates="employee", lazy="dynamic")

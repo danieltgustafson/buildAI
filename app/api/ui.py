@@ -30,8 +30,9 @@ _HTML = """
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Contractor Ops Upload UI</title>
+  <link href="https://cdn.jsdelivr.net/npm/vis-timeline@7.7.3/styles/vis-timeline-graph2d.min.css" rel="stylesheet" />
   <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 980px; }
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 1100px; }
     fieldset { margin-bottom: 1rem; }
     label { display: inline-block; min-width: 160px; }
     button { margin-top: .5rem; margin-right: .5rem; }
@@ -40,6 +41,16 @@ _HTML = """
     .row { margin: .4rem 0; }
     .small { color: #666; font-size: .9rem; }
     #wipChart { border: 1px solid #ddd; border-radius: 6px; width: 100%; max-width: 940px; }
+    #scheduleTimeline { border: 1px solid #ddd; border-radius: 6px; height: 420px; }
+    #utilizationTable, #coverageTable { width: 100%; border-collapse: collapse; font-size: .9rem; margin-top: .75rem; }
+    #utilizationTable th, #utilizationTable td,
+    #coverageTable th, #coverageTable td { border: 1px solid #ddd; padding: .35rem .6rem; text-align: left; }
+    #utilizationTable th, #coverageTable th { background: #f5f5f5; }
+    .pct-ok { color: #2e7d32; font-weight: bold; }
+    .pct-low { color: #1565c0; }
+    .pct-over { color: #c62828; font-weight: bold; }
+    .gap-under { color: #c62828; font-weight: bold; }
+    .gap-ok { color: #2e7d32; }
   </style>
 </head>
 <body>
@@ -89,9 +100,34 @@ _HTML = """
     <canvas id="wipChart" width="940" height="300"></canvas>
   </fieldset>
 
+  <fieldset>
+    <legend>5) Schedule Import</legend>
+    <p class="small">Upload your scheduling workbook (.xlsx). Expected sheets: <strong>Crew</strong> (Name + Level columns), <strong>Demand</strong> (Job Name + month columns with man-day counts), plus one sheet per month named like "Apr 2026" (columns = employee names, rows = day numbers, cells = job name).</p>
+    <div class="row">
+      <label>Schedule .xlsx</label>
+      <input type="file" id="scheduleFile" accept=".xlsx,.xlsm" />
+      <button onclick="importSchedule()">Import Workbook</button>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>6) Schedule Visualization</legend>
+    <div class="row">
+      <label>Month</label>
+      <input type="month" id="scheduleMonth" />
+      <button onclick="loadSchedule()">Load Schedule</button>
+    </div>
+    <div id="scheduleTimeline"></div>
+    <h4 style="margin-top:1rem">Utilization (assigned vs available weekdays)</h4>
+    <table id="utilizationTable"><thead><tr><th>Name</th><th>Crew Type</th><th>Available Days</th><th>Assigned Days</th><th>Utilization %</th></tr></thead><tbody></tbody></table>
+    <h4 style="margin-top:1rem">Coverage (demand vs assigned man-days)</h4>
+    <table id="coverageTable"><thead><tr><th>Job</th><th>Crew Type</th><th>Needed</th><th>Assigned</th><th>Gap</th></tr></thead><tbody></tbody></table>
+  </fieldset>
+
   <h3>Response log</h3>
   <pre id="out">Ready.</pre>
 
+<script src="https://cdn.jsdelivr.net/npm/vis-timeline@7.7.3/standalone/umd/vis-timeline-graph2d.min.js"></script>
 <script>
 const out = document.getElementById('out');
 let latestWipRows = [];
@@ -306,6 +342,155 @@ function downloadWipCsv() {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+// ── Schedule ──────────────────────────────────────────────────────────────
+
+let scheduleTimeline = null;
+
+const JOB_COLORS = [
+  '#1565c0','#2e7d32','#6a1b9a','#e65100','#00695c',
+  '#ad1457','#4527a0','#558b2f','#0277bd','#827717',
+];
+const jobColorMap = {};
+let colorIdx = 0;
+
+function jobColor(jobName) {
+  if (!jobName) return '#9e9e9e';
+  if (!jobColorMap[jobName]) {
+    jobColorMap[jobName] = JOB_COLORS[colorIdx % JOB_COLORS.length];
+    colorIdx++;
+  }
+  return jobColorMap[jobName];
+}
+
+async function importSchedule() {
+  try {
+    const fileInput = document.getElementById('scheduleFile');
+    if (!fileInput.files.length) { log('Choose a .xlsx file first.'); return; }
+    const fd = new FormData();
+    fd.append('file', fileInput.files[0]);
+    const body = await safeRequest('/schedule/import', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: fd,
+    });
+    log(body);
+  } catch (err) {
+    logError('schedule import failed', err);
+  }
+}
+
+function scheduleMonthParam() {
+  const v = document.getElementById('scheduleMonth').value;
+  return v || new Date().toISOString().slice(0, 7);
+}
+
+async function loadSchedule() {
+  try {
+    const month = scheduleMonthParam();
+    const [assignments, utilization, coverage] = await Promise.all([
+      safeRequest('/schedule/assignments?month=' + month, { headers: authHeaders() }),
+      safeRequest('/schedule/utilization?month=' + month, { headers: authHeaders() }),
+      safeRequest('/schedule/coverage?month=' + month, { headers: authHeaders() }),
+    ]);
+
+    renderTimeline(assignments, month);
+    renderUtilization(utilization);
+    renderCoverage(coverage);
+    log({ loaded: month, assignments: assignments.length });
+  } catch (err) {
+    logError('load schedule failed', err);
+  }
+}
+
+function renderTimeline(assignments, month) {
+  const container = document.getElementById('scheduleTimeline');
+
+  // Groups = unique employees
+  const empMap = {};
+  assignments.forEach(a => {
+    empMap[a.employee_id] = a.employee_name + (a.crew_type ? ' (' + a.crew_type + ')' : '');
+  });
+  const groups = new vis.DataSet(
+    Object.entries(empMap).map(([id, name]) => ({ id, content: name }))
+  );
+
+  // Items = one block per assignment day
+  const items = new vis.DataSet(
+    assignments.map((a, i) => {
+      const d = new Date(a.work_date + 'T00:00:00');
+      const end = new Date(d); end.setDate(end.getDate() + 1);
+      const color = jobColor(a.job_name);
+      return {
+        id: i,
+        group: a.employee_id,
+        content: a.job_name || '?',
+        start: d,
+        end: end,
+        style: 'background:' + color + ';border-color:' + color + ';color:#fff;',
+        title: (a.job_name || '?') + ' – ' + a.work_date,
+      };
+    })
+  );
+
+  // Set window to the selected month
+  const [y, m] = month.split('-').map(Number);
+  const windowStart = new Date(y, m - 1, 1);
+  const windowEnd = new Date(y, m, 1);
+
+  const options = {
+    start: windowStart,
+    end: windowEnd,
+    min: windowStart,
+    max: windowEnd,
+    stack: false,
+    orientation: 'top',
+    moveable: false,
+    zoomable: false,
+  };
+
+  if (scheduleTimeline) {
+    scheduleTimeline.setGroups(groups);
+    scheduleTimeline.setItems(items);
+    scheduleTimeline.setWindow(windowStart, windowEnd, { animation: false });
+  } else {
+    scheduleTimeline = new vis.Timeline(container, items, groups, options);
+  }
+}
+
+function renderUtilization(rows) {
+  const tbody = document.querySelector('#utilizationTable tbody');
+  tbody.innerHTML = '';
+  rows.forEach(r => {
+    const pct = r.utilization_pct;
+    const cls = pct > 100 ? 'pct-over' : pct >= 80 ? 'pct-ok' : 'pct-low';
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + r.employee_name + '</td>' +
+      '<td>' + (r.crew_type || '') + '</td>' +
+      '<td>' + r.available_days + '</td>' +
+      '<td>' + r.assigned_days + '</td>' +
+      '<td class="' + cls + '">' + pct + '%</td>';
+    tbody.appendChild(tr);
+  });
+}
+
+function renderCoverage(rows) {
+  const tbody = document.querySelector('#coverageTable tbody');
+  tbody.innerHTML = '';
+  rows.forEach(r => {
+    const gap = r.gap;
+    const cls = gap < 0 ? 'gap-under' : 'gap-ok';
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + r.job_name + '</td>' +
+      '<td>' + (r.crew_type || 'any') + '</td>' +
+      '<td>' + r.man_days_needed + '</td>' +
+      '<td>' + r.man_days_assigned + '</td>' +
+      '<td class="' + cls + '">' + (gap >= 0 ? '+' : '') + gap + '</td>';
+    tbody.appendChild(tr);
+  });
 }
 
 

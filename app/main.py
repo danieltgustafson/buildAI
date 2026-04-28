@@ -10,6 +10,7 @@ from app.api import (
     ingest,
     jobs,
     mappings,
+    schedule,
     seed,
     ui,
     wip,
@@ -40,6 +41,7 @@ app.include_router(jobs.router)
 app.include_router(wip.router)
 app.include_router(exceptions.router)
 app.include_router(mappings.router)
+app.include_router(schedule.router)
 app.include_router(seed.router)
 app.include_router(ui.router)
 app.include_router(building_research.router)

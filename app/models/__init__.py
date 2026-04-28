@@ -6,8 +6,10 @@ from app.models.job import Job, JobStatus
 from app.models.job_billing import JobBilling
 from app.models.job_budget import JobBudget
 from app.models.job_daily_metric import JobDailyMetric
+from app.models.job_labor_demand import JobLaborDemand
 from app.models.job_mapping import JobMapping
 from app.models.labor_burden_rate import LaborBurdenRate
+from app.models.schedule_assignment import ScheduleAssignment
 from app.models.time_entry import TimeEntry
 
 __all__ = [
@@ -24,4 +26,6 @@ __all__ = [
     "LaborBurdenRate",
     "ExceptionModel",
     "JobDailyMetric",
+    "JobLaborDemand",
+    "ScheduleAssignment",
 ]

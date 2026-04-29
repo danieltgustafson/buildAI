@@ -42,19 +42,8 @@ def create_access_token(data: dict) -> str:
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> TokenData:
-    """Extract user from JWT. If no token provided, default to viewer for POC."""
-    if credentials is None:
-        return TokenData(sub="anonymous", role="viewer")
-    try:
-        payload = jwt.decode(
-            credentials.credentials, settings.secret_key, algorithms=[settings.algorithm]
-        )
-        return TokenData(sub=payload.get("sub", "unknown"), role=payload.get("role", "viewer"))
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-        )
+    """Auth disabled for POC — every request is treated as admin."""
+    return TokenData(sub="poc-user", role="admin")
 
 
 def require_role(*roles: str):

@@ -233,7 +233,9 @@ _SCHEDULER_HTML = """<!doctype html>
   <link href="https://cdn.jsdelivr.net/npm/vis-timeline@7.7.3/styles/vis-timeline-graph2d.min.css" rel="stylesheet" />
   <style>
 """ + _SHARED_STYLE + """
-    #scheduleTimeline { border: 1px solid #ddd; border-radius: 6px; height: 500px; margin-top: .5rem; }
+    #scheduleTimeline { border: 1px solid #ddd; border-radius: 6px; height: 500px;
+                        margin-top: .5rem; margin-bottom: 2rem;
+                        position: relative; overflow: hidden; }
     table { width: 100%; border-collapse: collapse; font-size: .9rem; margin-top: .75rem; }
     th, td { border: 1px solid #ddd; padding: .35rem .6rem; text-align: left; }
     th { background: #f5f5f5; }

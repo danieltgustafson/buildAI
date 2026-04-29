@@ -233,7 +233,7 @@ _SCHEDULER_HTML = """<!doctype html>
   <link href="https://cdn.jsdelivr.net/npm/vis-timeline@7.7.3/styles/vis-timeline-graph2d.min.css" rel="stylesheet" />
   <style>
 """ + _SHARED_STYLE + """
-    #scheduleTimeline { border: 1px solid #ddd; border-radius: 6px; height: 480px; margin-top: .5rem; }
+    #scheduleTimeline { border: 1px solid #ddd; border-radius: 6px; height: 500px; margin-top: .5rem; }
     table { width: 100%; border-collapse: collapse; font-size: .9rem; margin-top: .75rem; }
     th, td { border: 1px solid #ddd; padding: .35rem .6rem; text-align: left; }
     th { background: #f5f5f5; }
@@ -242,6 +242,16 @@ _SCHEDULER_HTML = """<!doctype html>
     .pct-over { color: #c62828; font-weight: bold; }
     .gap-under { color: #c62828; font-weight: bold; }
     .gap-ok    { color: #2e7d32; }
+    #crewList { columns: 3; margin: .5rem 0 .75rem; max-height: 280px; overflow-y: auto;
+                border: 1px solid #ddd; border-radius: 4px; padding: .5rem .75rem; }
+    #crewList label { display: block; break-inside: avoid; font-size: .88rem;
+                      padding: .15rem 0; cursor: pointer; white-space: nowrap; }
+    #crewList label input { margin-right: .4rem; }
+    .rank-badge { display: inline-block; background: #eee; border-radius: 3px;
+                  font-size: .75rem; padding: 0 .35rem; margin-left: .3rem; color: #555; }
+    .summary-box { background: #f0f4ff; border: 1px solid #c5cae9; border-radius: 6px;
+                   padding: .6rem 1rem; margin: .5rem 0; font-size: .92rem; }
+    .summary-box span { font-weight: bold; }
   </style>
 </head>
 <body>
@@ -253,8 +263,8 @@ _SCHEDULER_HTML = """<!doctype html>
   <h1>Crew Scheduler</h1>
 
   <fieldset>
-    <legend>Import Workbook</legend>
-    <p class="small">Upload the crew scheduling .xlsx (sheets: <strong>Employee Contact Information</strong>, <strong>Man Day Count</strong>, plus monthly sheets named January–December).</p>
+    <legend>Import Historical Workbook</legend>
+    <p class="small">One-time: upload the 2025 .xlsx to populate employees, job demand, and historical assignments.</p>
     <div class="row">
       <input type="file" id="scheduleFile" accept=".xlsx,.xlsm" />
       <button onclick="importSchedule()">Import</button>
@@ -262,23 +272,42 @@ _SCHEDULER_HTML = """<!doctype html>
   </fieldset>
 
   <fieldset>
+    <legend>Generate Draft Schedule</legend>
+    <div class="row">
+      <label>Month to schedule</label>
+      <input type="month" id="scheduleMonth" />
+      <button onclick="loadCrew()">1. Load Crew</button>
+    </div>
+
+    <div id="crewSection" style="display:none">
+      <p class="small" style="margin:.5rem 0 .25rem">
+        Check anyone <strong>unavailable</strong> this month (vacation, PTO, etc.).
+        Listed highest-ranked first — top crew get assigned to most-needed jobs.
+      </p>
+      <div id="crewList"></div>
+      <button onclick="generateSchedule()">2. Generate Draft Schedule</button>
+      <button onclick="clearSchedule()" style="background:#fff;color:#c62828;border:1px solid #c62828">Clear Schedule</button>
+    </div>
+
+    <div id="generateSummary" style="display:none" class="summary-box"></div>
+  </fieldset>
+
+  <fieldset>
     <legend>View Schedule</legend>
     <div class="row">
-      <label>Month</label>
-      <input type="month" id="scheduleMonth" />
-      <button onclick="loadSchedule()">Load</button>
+      <button onclick="loadSchedule()">Refresh View</button>
     </div>
     <div id="scheduleTimeline"></div>
 
-    <h4 style="margin-top:1.25rem">Utilization</h4>
+    <h4 style="margin-top:1.25rem">Utilization — assigned vs available weekdays</h4>
     <table id="utilizationTable">
-      <thead><tr><th>Name</th><th>Crew Type</th><th>Available Days</th><th>Assigned Days</th><th>Utilization %</th></tr></thead>
+      <thead><tr><th>Name</th><th>Title</th><th>Crew Type</th><th>Score</th><th>Available</th><th>Assigned</th><th>Utilization %</th></tr></thead>
       <tbody></tbody>
     </table>
 
-    <h4 style="margin-top:1.25rem">Coverage (demand vs assigned)</h4>
+    <h4 style="margin-top:1.25rem">Coverage — demand vs assigned man-days</h4>
     <table id="coverageTable">
-      <thead><tr><th>Job</th><th>Crew Type</th><th>Needed</th><th>Assigned</th><th>Gap</th></tr></thead>
+      <thead><tr><th>Job</th><th>Needed</th><th>Assigned</th><th>Gap</th></tr></thead>
       <tbody></tbody>
     </table>
   </fieldset>
@@ -290,16 +319,89 @@ _SCHEDULER_HTML = """<!doctype html>
 <script>
 """ + _SHARED_JS + """
 
+// ── Import ────────────────────────────────────────────────────────────────
 async function importSchedule() {
   try {
     const fi = document.getElementById('scheduleFile');
     if (!fi.files.length) { log('Choose a .xlsx file first.'); return; }
     const fd = new FormData();
     fd.append('file', fi.files[0]);
-    log(await safeRequest('/schedule/import', { method: 'POST', body: fd }));
+    const result = await safeRequest('/schedule/import', { method: 'POST', body: fd });
+    log(result);
   } catch (err) { logError('import failed', err); }
 }
 
+// ── Crew loader ───────────────────────────────────────────────────────────
+let allCrew = [];
+
+async function loadCrew() {
+  try {
+    allCrew = await safeRequest('/schedule/employees');
+    const div = document.getElementById('crewList');
+    div.innerHTML = '';
+    allCrew.forEach(emp => {
+      const lbl = document.createElement('label');
+      const score = emp.ranking_score != null ? emp.ranking_score : '–';
+      const title = emp.ranking_title || emp.crew_type || '';
+      lbl.innerHTML =
+        '<input type="checkbox" value="' + emp.employee_id + '" class="absent-cb"> '
+        + emp.name
+        + (title ? ' <em style="color:#666;font-size:.82rem">' + title + '</em>' : '')
+        + ' <span class="rank-badge">' + score + '</span>';
+      div.appendChild(lbl);
+    });
+    document.getElementById('crewSection').style.display = '';
+    log({ crew_loaded: allCrew.length });
+  } catch (err) { logError('load crew failed', err); }
+}
+
+function absentIds() {
+  return [...document.querySelectorAll('.absent-cb:checked')].map(cb => cb.value);
+}
+
+// ── Generate ──────────────────────────────────────────────────────────────
+async function generateSchedule() {
+  try {
+    const month = document.getElementById('scheduleMonth').value;
+    if (!month) { log('Pick a month first.'); return; }
+    const body = { month, absent_employee_ids: absentIds(), clear_existing: true };
+    const result = await safeRequest('/schedule/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const box = document.getElementById('generateSummary');
+    box.style.display = '';
+    box.innerHTML =
+      'Generated <span>' + result.assignments_created + ' assignments</span> for ' + result.month
+      + ' &nbsp;|&nbsp; Crew: <span>' + result.available_crew + '</span>'
+      + ' &nbsp;|&nbsp; Supply: <span>' + result.total_supply_days + ' days</span>'
+      + ' &nbsp;|&nbsp; Demand: <span>' + result.total_demand_days + ' days</span>'
+      + ' &nbsp;|&nbsp; Demand met: <span>' + result.demand_met_pct + '%</span>'
+      + ' &nbsp;|&nbsp; Crew utilization: <span>' + result.crew_utilization_pct + '%</span>';
+    log(result);
+    await loadSchedule();
+  } catch (err) { logError('generate failed', err); }
+}
+
+async function clearSchedule() {
+  if (!window.confirm('Clear all assignments for this month?')) return;
+  try {
+    const month = document.getElementById('scheduleMonth').value;
+    if (!month) { log('Pick a month first.'); return; }
+    // generate with no crew → clears existing and creates 0 assignments
+    await safeRequest('/schedule/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ month, absent_employee_ids: allCrew.map(e => e.employee_id), clear_existing: true }),
+    });
+    document.getElementById('generateSummary').style.display = 'none';
+    await loadSchedule();
+    log('Schedule cleared.');
+  } catch (err) { logError('clear failed', err); }
+}
+
+// ── Timeline + tables ─────────────────────────────────────────────────────
 let scheduleTimeline = null;
 const JOB_COLORS = ['#1565c0','#2e7d32','#6a1b9a','#e65100','#00695c',
   '#ad1457','#4527a0','#558b2f','#0277bd','#827717','#4e342e','#37474f'];
@@ -322,14 +424,13 @@ async function loadSchedule() {
     renderTimeline(assignments, month);
     renderUtilization(utilization);
     renderCoverage(coverage);
-    log({ month, assignments: assignments.length, crew: utilization.length });
   } catch (err) { logError('load schedule failed', err); }
 }
 
 function renderTimeline(assignments, month) {
   const empMap = {};
   assignments.forEach(a => {
-    empMap[a.employee_id] = a.employee_name + (a.crew_type ? ' (' + a.crew_type + ')' : '');
+    empMap[a.employee_id] = a.employee_name;
   });
   const groups = new vis.DataSet(
     Object.entries(empMap).map(([id, content]) => ({ id, content }))
@@ -339,7 +440,7 @@ function renderTimeline(assignments, month) {
     const end = new Date(d); end.setDate(end.getDate() + 1);
     const color = jobColor(a.job_name);
     return { id: i, group: a.employee_id, content: a.job_name || '?', start: d, end,
-      style: 'background:' + color + ';border-color:' + color + ';color:#fff;font-size:.8rem;',
+      style: 'background:' + color + ';border-color:' + color + ';color:#fff;font-size:.78rem;',
       title: (a.job_name || '?') + ' – ' + a.work_date };
   }));
   const [y, m] = month.split('-').map(Number);
@@ -351,7 +452,8 @@ function renderTimeline(assignments, month) {
     scheduleTimeline.setItems(items);
     scheduleTimeline.setWindow(start, end, { animation: false });
   } else {
-    scheduleTimeline = new vis.Timeline(document.getElementById('scheduleTimeline'), items, groups, opts);
+    scheduleTimeline = new vis.Timeline(
+      document.getElementById('scheduleTimeline'), items, groups, opts);
   }
 }
 
@@ -359,11 +461,18 @@ function renderUtilization(rows) {
   const tbody = document.querySelector('#utilizationTable tbody');
   tbody.innerHTML = '';
   rows.forEach(r => {
+    const emp = allCrew.find(e => e.employee_id === r.employee_id) || {};
     const pct = r.utilization_pct;
     const cls = pct > 100 ? 'pct-over' : pct >= 80 ? 'pct-ok' : 'pct-low';
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td>' + r.employee_name + '</td><td>' + (r.crew_type || '') + '</td><td>'
-      + r.available_days + '</td><td>' + r.assigned_days + '</td><td class="' + cls + '">' + pct + '%</td>';
+    tr.innerHTML =
+      '<td>' + r.employee_name + '</td>'
+      + '<td>' + (emp.ranking_title || '') + '</td>'
+      + '<td>' + (r.crew_type || '') + '</td>'
+      + '<td>' + (emp.ranking_score != null ? emp.ranking_score : '–') + '</td>'
+      + '<td>' + r.available_days + '</td>'
+      + '<td>' + r.assigned_days + '</td>'
+      + '<td class="' + cls + '">' + pct + '%</td>';
     tbody.appendChild(tr);
   });
 }
@@ -375,9 +484,11 @@ function renderCoverage(rows) {
     const gap = r.gap;
     const cls = gap < 0 ? 'gap-under' : 'gap-ok';
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td>' + r.job_name + '</td><td>' + (r.crew_type || 'any') + '</td><td>'
-      + r.man_days_needed + '</td><td>' + r.man_days_assigned + '</td><td class="' + cls + '">'
-      + (gap >= 0 ? '+' : '') + gap + '</td>';
+    tr.innerHTML =
+      '<td>' + r.job_name + '</td>'
+      + '<td>' + r.man_days_needed + '</td>'
+      + '<td>' + r.man_days_assigned + '</td>'
+      + '<td class="' + cls + '">' + (gap >= 0 ? '+' : '') + gap + '</td>';
     tbody.appendChild(tr);
   });
 }

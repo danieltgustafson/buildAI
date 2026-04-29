@@ -182,7 +182,46 @@ def import_workbook(path_or_bytes: Any, db: Session, demand_year: int = 2025) ->
         all_jobs[key] = job
         return job
 
-    # ── 2. Man Day Count (demand) ───────────────────────────────────────────
+    # ── 2. Rankings ────────────────────────────────────────────────────────
+    rankings_sheet = next(
+        (s for s in xl.sheet_names if "ranking" in s.lower()), None
+    )
+    if rankings_sheet:
+        df = xl.parse(rankings_sheet, header=0, dtype=str).fillna("")
+        cols_lower = {c.strip().lower(): c for c in df.columns}
+
+        worker_col = next((cols_lower[k] for k in cols_lower if "worker" in k or "name" in k), df.columns[0])
+        score_col = next((cols_lower[k] for k in cols_lower if "doug" in k and "current" in k), None)
+        title_col = next((cols_lower[k] for k in cols_lower if k == "title"), None)
+
+        for _, row in df.iterrows():
+            raw_name = _clean(row[worker_col])
+            if not raw_name or raw_name.lower() in ("nan", "worker"):
+                continue
+
+            score = None
+            if score_col:
+                try:
+                    score = int(float(_clean(row[score_col])))
+                except (ValueError, TypeError):
+                    pass
+
+            title = _clean(row[title_col]) if title_col else None
+            if title and title.lower() == "nan":
+                title = None
+
+            emp = _match_employee(raw_name, name_idx, db, warnings)
+            if emp:
+                if score is not None:
+                    emp.ranking_score = score
+                if title:
+                    emp.ranking_title = title
+
+        db.flush()
+    else:
+        warnings.append("No 'Rankings' sheet found; skipping ranking import.")
+
+    # ── 3. Man Day Count (demand) ───────────────────────────────────────────
     demand_sheet = next(
         (s for s in xl.sheet_names if "man day" in s.lower() or "demand" in s.lower()),
         None,

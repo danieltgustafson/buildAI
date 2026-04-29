@@ -16,12 +16,16 @@ from app.models.job_labor_demand import JobLaborDemand
 from app.models.schedule_assignment import ScheduleAssignment
 from app.schemas.schedule import (
     CoverageRow,
+    EmployeeSimple,
+    GenerateRequest,
+    GenerateResult,
     JobLaborDemandRead,
     ScheduleAssignmentRead,
     ScheduleImportResult,
     UtilizationRow,
 )
 from app.services.schedule_import import import_workbook
+from app.services.schedule_generator import generate_schedule
 
 router = APIRouter(prefix="/schedule", tags=["schedule"])
 
@@ -177,3 +181,44 @@ def get_coverage(
         ))
 
     return sorted(result, key=lambda r: (r.job_name, r.crew_type or ""))
+
+
+@router.get("/employees", response_model=list[EmployeeSimple])
+def list_employees(
+    db: Session = Depends(get_db),
+    _user: TokenData = Depends(require_role("admin", "ops", "viewer")),
+):
+    """All employees with name and crew type — used to build absence checkboxes."""
+    employees = db.query(Employee).order_by(
+        Employee.ranking_score.desc().nullslast(), Employee.name
+    ).all()
+    return [EmployeeSimple(
+        employee_id=e.employee_id,
+        name=e.name,
+        crew_type=e.crew_type,
+        ranking_score=e.ranking_score,
+        ranking_title=e.ranking_title,
+    ) for e in employees]
+
+
+@router.post("/generate", response_model=GenerateResult)
+def generate_draft_schedule(
+    req: GenerateRequest,
+    db: Session = Depends(get_db),
+    _user: TokenData = Depends(require_role("admin", "ops")),
+):
+    """Generate a proportional draft schedule for a month.
+
+    Distributes available crew across jobs in proportion to each job's
+    remaining monthly man-day demand. Pass absent_employee_ids to exclude
+    crew members who are unavailable for the month.
+    """
+    result = generate_schedule(
+        month=req.month,
+        absent_employee_ids=set(req.absent_employee_ids),
+        db=db,
+        clear_existing=req.clear_existing,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=422, detail=result["error"])
+    return result

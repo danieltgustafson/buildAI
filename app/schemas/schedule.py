@@ -54,3 +54,31 @@ class ScheduleImportResult(BaseModel):
     demand_rows_upserted: int
     assignments_upserted: int
     warnings: list[str]
+
+
+class EmployeeSimple(BaseModel):
+    employee_id: uuid.UUID
+    name: str
+    crew_type: Optional[str]
+    ranking_score: Optional[int]
+    ranking_title: Optional[str]
+
+    model_config = {"from_attributes": True}
+
+
+class GenerateRequest(BaseModel):
+    month: str                          # YYYY-MM
+    absent_employee_ids: list[str] = [] # employee_ids (as strings) absent the whole month
+    clear_existing: bool = True
+
+
+class GenerateResult(BaseModel):
+    month: str
+    working_days: int
+    available_crew: int
+    total_supply_days: int
+    total_demand_days: int
+    assignments_created: int
+    demand_unmet_days: int
+    demand_met_pct: float
+    crew_utilization_pct: float

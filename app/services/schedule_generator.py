@@ -65,11 +65,17 @@ def generate_schedule(
 
     total_demand = sum(job_remaining.values())
 
-    # Available crew — sorted by ranking score descending so higher-ranked
-    # workers get first pick of the most demanding jobs each day.
+    # Roles that should never be scheduled to field jobs
+    _NON_FIELD = {"office", "ceo/president", "ceo", "president", "project manager"}
+
+    # Available crew — field staff only, sorted by ranking score descending
     all_employees = db.query(Employee).all()
     crew = sorted(
-        [e for e in all_employees if str(e.employee_id) not in absent_employee_ids],
+        [
+            e for e in all_employees
+            if str(e.employee_id) not in absent_employee_ids
+            and (e.crew_type or "").strip().lower() not in _NON_FIELD
+        ],
         key=lambda e: (e.ranking_score or 0),
         reverse=True,
     )

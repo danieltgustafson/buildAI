@@ -333,25 +333,48 @@ async function importSchedule() {
 
 // ── Crew loader ───────────────────────────────────────────────────────────
 let allCrew = [];
+const NON_FIELD = new Set(['office', 'ceo/president', 'ceo', 'president', 'project manager']);
+
+function isFieldCrew(emp) {
+  return !NON_FIELD.has((emp.crew_type || '').toLowerCase());
+}
 
 async function loadCrew() {
   try {
     allCrew = await safeRequest('/schedule/employees');
     const div = document.getElementById('crewList');
     div.innerHTML = '';
-    allCrew.forEach(emp => {
+
+    // Field crew first, then office/non-field (greyed out, pre-checked as absent)
+    const field = allCrew.filter(isFieldCrew);
+    const office = allCrew.filter(e => !isFieldCrew(e));
+
+    function addEntry(emp, defaultAbsent) {
       const lbl = document.createElement('label');
       const score = emp.ranking_score != null ? emp.ranking_score : '–';
       const title = emp.ranking_title || emp.crew_type || '';
+      const dimStyle = defaultAbsent ? 'color:#aaa;' : '';
+      lbl.style.cssText = dimStyle;
       lbl.innerHTML =
-        '<input type="checkbox" value="' + emp.employee_id + '" class="absent-cb"> '
+        '<input type="checkbox" value="' + emp.employee_id + '" class="absent-cb"'
+        + (defaultAbsent ? ' checked' : '') + '> '
         + emp.name
-        + (title ? ' <em style="color:#666;font-size:.82rem">' + title + '</em>' : '')
+        + (title ? ' <em style="color:#999;font-size:.82rem">' + title + '</em>' : '')
         + ' <span class="rank-badge">' + score + '</span>';
       div.appendChild(lbl);
-    });
+    }
+
+    field.forEach(e => addEntry(e, false));
+    if (office.length) {
+      const sep = document.createElement('div');
+      sep.style.cssText = 'color:#aaa;font-size:.8rem;margin:.4rem 0 .2rem;border-top:1px solid #eee;padding-top:.4rem;break-before:column';
+      sep.textContent = 'Office / non-field (excluded by default)';
+      div.appendChild(sep);
+      office.forEach(e => addEntry(e, true));
+    }
+
     document.getElementById('crewSection').style.display = '';
-    log({ crew_loaded: allCrew.length });
+    log({ field_crew: field.length, office_excluded: office.length });
   } catch (err) { logError('load crew failed', err); }
 }
 
@@ -427,26 +450,67 @@ async function loadSchedule() {
   } catch (err) { logError('load schedule failed', err); }
 }
 
+// Merge consecutive days on the same job into single spanning blocks.
+// Input: raw assignment array sorted by work_date within each employee.
+function mergeAssignments(assignments) {
+  const byEmp = {};
+  assignments.forEach(a => {
+    (byEmp[a.employee_id] = byEmp[a.employee_id] || []).push(a);
+  });
+  const merged = [];
+  let itemId = 0;
+  Object.values(byEmp).forEach(list => {
+    list.sort((a, b) => a.work_date < b.work_date ? -1 : 1);
+    let run = null;
+    list.forEach(a => {
+      const d = new Date(a.work_date + 'T00:00:00');
+      const nextD = new Date(d); nextD.setDate(nextD.getDate() + 1);
+      if (run && run.job_name === a.job_name && run.end.getTime() === d.getTime()) {
+        run.end = nextD; // extend existing run
+      } else {
+        if (run) merged.push(run);
+        run = { id: itemId++, employee_id: a.employee_id, employee_name: a.employee_name,
+                job_name: a.job_name, start: d, end: nextD };
+      }
+    });
+    if (run) merged.push(run);
+  });
+  return merged;
+}
+
 function renderTimeline(assignments, month) {
   const empMap = {};
-  assignments.forEach(a => {
-    empMap[a.employee_id] = a.employee_name;
-  });
+  assignments.forEach(a => { empMap[a.employee_id] = a.employee_name; });
   const groups = new vis.DataSet(
     Object.entries(empMap).map(([id, content]) => ({ id, content }))
   );
-  const items = new vis.DataSet(assignments.map((a, i) => {
-    const d = new Date(a.work_date + 'T00:00:00');
-    const end = new Date(d); end.setDate(end.getDate() + 1);
-    const color = jobColor(a.job_name);
-    return { id: i, group: a.employee_id, content: a.job_name || '?', start: d, end,
-      style: 'background:' + color + ';border-color:' + color + ';color:#fff;font-size:.78rem;',
-      title: (a.job_name || '?') + ' – ' + a.work_date };
+
+  const blocks = mergeAssignments(assignments);
+  const items = new vis.DataSet(blocks.map(b => {
+    const color = jobColor(b.job_name);
+    const days = Math.round((b.end - b.start) / 86400000);
+    return {
+      id: b.id,
+      group: b.employee_id,
+      content: b.job_name || '?',
+      start: b.start,
+      end: b.end,
+      title: b.job_name + ' (' + days + ' day' + (days !== 1 ? 's' : '') + ')',
+      style: 'background:' + color + ';border-color:' + color
+             + ';color:#fff;font-size:.78rem;border-radius:3px;',
+    };
   }));
+
   const [y, m] = month.split('-').map(Number);
   const start = new Date(y, m - 1, 1), end = new Date(y, m, 1);
-  const opts = { start, end, min: start, max: end, stack: false,
-    orientation: 'top', moveable: false, zoomable: false };
+  const opts = {
+    start, end, min: start, max: end,
+    stack: true,
+    orientation: 'top',
+    moveable: false,
+    zoomable: false,
+    groupHeightMode: 'fixed',
+  };
   if (scheduleTimeline) {
     scheduleTimeline.setGroups(groups);
     scheduleTimeline.setItems(items);

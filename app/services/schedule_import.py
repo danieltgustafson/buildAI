@@ -29,7 +29,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.models.employee import Employee
-from app.models.job import Job
+from app.models.job import Job, JobStatus
 from app.models.job_labor_demand import JobLaborDemand
 from app.models.schedule_assignment import ScheduleAssignment
 
@@ -172,6 +172,16 @@ def import_workbook(path_or_bytes: Any, db: Session, demand_year: int = 2025) ->
 
     all_jobs: dict[str, Job] = {j.job_name.strip().lower(): j for j in db.query(Job).all()}
 
+    def _get_or_create_job(name: str) -> Job:
+        key = name.strip().lower()
+        if key in all_jobs:
+            return all_jobs[key]
+        job = Job(job_name=name.strip(), status=JobStatus.active)
+        db.add(job)
+        db.flush()
+        all_jobs[key] = job
+        return job
+
     # ── 2. Man Day Count (demand) ───────────────────────────────────────────
     demand_sheet = next(
         (s for s in xl.sheet_names if "man day" in s.lower() or "demand" in s.lower()),
@@ -188,10 +198,7 @@ def import_workbook(path_or_bytes: Any, db: Session, demand_year: int = 2025) ->
             if not job_name or job_name.lower() in ("nan", "job", "total"):
                 continue
 
-            job = all_jobs.get(job_name.lower())
-            if job is None:
-                warnings.append(f"Demand: job '{job_name}' not in DB — skipped.")
-                continue
+            job = _get_or_create_job(job_name)
 
             for col in df.columns[1:]:
                 month_key = _clean(col).lower()
@@ -276,14 +283,9 @@ def import_workbook(path_or_bytes: Any, db: Session, demand_year: int = 2025) ->
                 # Handle "Job A/Job B" — take first job listed
                 job_name_clean = job_name_clean.split("/")[0].strip()
 
-                job = all_jobs.get(job_name_clean.lower())
-                job_id = job.job_id if job else None
-                note = job_name_raw if job is None else None
-                if job is None:
-                    warnings.append(
-                        f"Sheet '{sheet_name}' {work_date} {raw_name}: "
-                        f"job '{job_name_clean}' not in DB — stored in notes."
-                    )
+                job = _get_or_create_job(job_name_clean)
+                job_id = job.job_id
+                note = job_name_raw if job_name_raw != job_name_clean else None
 
                 existing = (
                     db.query(ScheduleAssignment)
